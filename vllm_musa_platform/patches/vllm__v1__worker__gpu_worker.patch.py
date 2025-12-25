@@ -24,4 +24,3 @@ PATCHES = [
         'if isinstance(device, torch.device) and device.type in ("cuda", "musa"):',
     ),
 ]
-

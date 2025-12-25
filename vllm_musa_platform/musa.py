@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Optional, TypeVar
 
 import torch
 from typing_extensions import ParamSpec
-
 from vllm.logger import init_logger
 
 __all__ = [
@@ -48,6 +47,7 @@ def _import_torchada():
     """Import torchada and apply patches for CUDA→MUSA compatibility."""
     try:
         import torchada
+
         return torchada
     except ImportError:
         logger.warning("torchada not found. MUSA platform may not work correctly.")
@@ -65,6 +65,7 @@ def _apply_musa_patches():
     """
     try:
         from .patches import apply_patches
+
         apply_patches()
     except Exception as e:
         logger.warning(f"Failed to apply MUSA patches: {e}")
@@ -197,7 +198,7 @@ def _register_musa_cache_ops():
         # Register reshape_and_cache_flash
         @torch.library.custom_op(
             "_C_cache_ops::reshape_and_cache_flash",
-            mutates_args=("key_cache", "value_cache")
+            mutates_args=("key_cache", "value_cache"),
         )
         def reshape_and_cache_flash(
             key: torch.Tensor,
@@ -211,14 +212,19 @@ def _register_musa_cache_ops():
         ) -> None:
             """Reshape and cache key/value tensors using PyTorch."""
             _reshape_and_cache_flash_pytorch(
-                key, value, key_cache, value_cache,
-                slot_mapping, kv_cache_dtype, k_scale, v_scale
+                key,
+                value,
+                key_cache,
+                value_cache,
+                slot_mapping,
+                kv_cache_dtype,
+                k_scale,
+                v_scale,
             )
 
         # Register reshape_and_cache
         @torch.library.custom_op(
-            "_C_cache_ops::reshape_and_cache",
-            mutates_args=("key_cache", "value_cache")
+            "_C_cache_ops::reshape_and_cache", mutates_args=("key_cache", "value_cache")
         )
         def reshape_and_cache(
             key: torch.Tensor,
@@ -232,8 +238,14 @@ def _register_musa_cache_ops():
         ) -> None:
             """Reshape and cache key/value tensors using PyTorch."""
             _reshape_and_cache_pytorch(
-                key, value, key_cache, value_cache,
-                slot_mapping, kv_cache_dtype, k_scale, v_scale
+                key,
+                value,
+                key_cache,
+                value_cache,
+                slot_mapping,
+                kv_cache_dtype,
+                k_scale,
+                v_scale,
             )
 
         logger.info("Registered MUSA-compatible cache ops (PyTorch implementation)")
@@ -248,6 +260,7 @@ def _import_mtml():
     """Import mtml wrapper."""
     try:
         from . import mtml
+
         return mtml
     except ImportError:
         return None
@@ -266,12 +279,14 @@ def _get_mtml_lock():
     global _mtml_lock
     if _mtml_lock is None:
         import threading
+
         _mtml_lock = threading.Lock()
     return _mtml_lock
 
 
 def with_mtml_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
     """Decorator to wrap functions with MTML init/shutdown (reference counted)."""
+
     @wraps(fn)
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         global _mtml_ref_count
@@ -291,6 +306,7 @@ def with_mtml_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
                 _mtml_ref_count -= 1
                 if _mtml_ref_count == 0:
                     mtml.mtmlShutdown()
+
     return wrapper
 
 
@@ -464,9 +480,11 @@ class MUSAPlatformBase(Platform):
         # Try to import CompilationMode (vLLM 0.13+) or CompilationLevel (older)
         try:
             from vllm.config import CompilationMode
+
             NO_COMPILATION = CompilationMode.NONE
         except ImportError:
             from vllm.config import CompilationLevel
+
             NO_COMPILATION = CompilationLevel.NO_COMPILATION
 
         # Register MUSA cache ops (must be done after platform init is complete)
@@ -485,22 +503,23 @@ class MUSAPlatformBase(Platform):
 
         # Disable torch.compile for MUSA (device type not fully supported)
         # In vLLM 0.13+, V1 is the default engine; in older versions check VLLM_USE_V1
-        use_v1 = getattr(envs, 'VLLM_USE_V1', True)  # Default to True for 0.13+
+        use_v1 = getattr(envs, "VLLM_USE_V1", True)  # Default to True for 0.13+
         if use_v1 and model_config is not None:
             # Use 'level' for older vLLM, 'mode' for newer vLLM 0.13+
-            if hasattr(vllm_config.compilation_config, 'mode'):
+            if hasattr(vllm_config.compilation_config, "mode"):
                 vllm_config.compilation_config.mode = NO_COMPILATION
             else:
                 vllm_config.compilation_config.level = NO_COMPILATION
 
         # Disable CUDA graphs for MUSA (no CUDA runtime)
         compilation_config = vllm_config.compilation_config
-        if (compilation_config.cudagraph_mode is None
-                or compilation_config.cudagraph_mode.max_cudagraph_mode()
-                != CUDAGraphMode.NONE):
+        if (
+            compilation_config.cudagraph_mode is None
+            or compilation_config.cudagraph_mode.max_cudagraph_mode()
+            != CUDAGraphMode.NONE
+        ):
             logger.info_once(
-                "[MUSA] CUDA graph is not supported on MUSA, "
-                "disabling cudagraphs."
+                "[MUSA] CUDA graph is not supported on MUSA, " "disabling cudagraphs."
             )
             compilation_config.cudagraph_mode = CUDAGraphMode.NONE
 
@@ -559,6 +578,7 @@ class MUSAPlatformBase(Platform):
     @classmethod
     def get_supported_vit_attn_backends(cls) -> list["AttentionBackendEnum"]:
         from vllm.attention.backends.registry import AttentionBackendEnum
+
         return [AttentionBackendEnum.TORCH_SDPA]
 
     @classmethod
@@ -688,9 +708,7 @@ class MtmlMUSAPlatform(MUSAPlatformBase):
     @with_mtml_context
     def is_fully_connected(cls, physical_device_ids: list[int]) -> bool:
         """Check if devices are fully connected via MtLink (1 hop)."""
-        handles = [
-            mtml.mtmlDeviceGetHandleByIndex(i) for i in physical_device_ids
-        ]
+        handles = [mtml.mtmlDeviceGetHandleByIndex(i) for i in physical_device_ids]
         for i, handle in enumerate(handles):
             try:
                 mtlink_spec = mtml.mtmlDeviceGetMtLinkSpec(handle)

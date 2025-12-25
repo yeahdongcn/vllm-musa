@@ -72,15 +72,17 @@ def apply_patches():
             except ModuleNotFoundError:
                 # Module doesn't exist in this vLLM version (e.g., vllm.worker.worker
                 # exists in vLLM 0.10.x but not in 0.13.0 where V0 engine was removed)
-                logger.debug(f"Module {module_name} not found in this vLLM version, "
-                            "skipping patch (this is expected for version-specific patches)")
+                logger.debug(
+                    f"Module {module_name} not found in this vLLM version, "
+                    "skipping patch (this is expected for version-specific patches)"
+                )
                 continue
             if spec is None or spec.origin is None:
                 logger.debug(f"Module {module_name} not found, skipping patch")
                 continue
 
             # Read the source file
-            with open(spec.origin, 'r') as f:
+            with open(spec.origin, "r") as f:
                 source = f.read()
 
             # Load patches from patch file
@@ -103,7 +105,7 @@ def apply_patches():
                     applied_count += 1
 
             # Write back the patched source
-            with open(spec.origin, 'w') as f:
+            with open(spec.origin, "w") as f:
                 f.write(patched_source)
 
             # Remove from cache to force reload
@@ -116,4 +118,3 @@ def apply_patches():
             logger.warning(f"Failed to apply patches to {module_name}: {e}")
 
     _patches_applied = True
-

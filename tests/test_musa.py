@@ -64,6 +64,7 @@ class TestMUSAPlatformBase:
     def test_supported_dtypes(self):
         """Test that supported_dtypes includes bf16, fp16, and fp32."""
         import torch
+
         from vllm_musa_platform.musa import MUSAPlatformBase
 
         platform = MUSAPlatformBase()
@@ -109,7 +110,9 @@ class TestMUSAPlatformBase:
         from vllm_musa_platform.musa import MUSAPlatformBase
 
         result = MUSAPlatformBase.get_device_communicator_cls()
-        expected = "vllm.distributed.device_communicators.cuda_communicator.CudaCommunicator"
+        expected = (
+            "vllm.distributed.device_communicators.cuda_communicator.CudaCommunicator"
+        )
         assert result == expected
 
     def test_get_static_graph_wrapper_cls(self):
@@ -177,7 +180,7 @@ class TestWithMtmlContext:
 
     def test_decorator_returns_function_result(self):
         """Test that the decorator returns the wrapped function's result."""
-        from vllm_musa_platform.musa import with_mtml_context, mtml
+        from vllm_musa_platform.musa import mtml, with_mtml_context
 
         if mtml is None or not mtml.is_mtml_available():
             pytest.skip("MTML not available")
@@ -272,8 +275,8 @@ class TestPlatformSelection:
     def test_musa_platform_is_one_of_two_options(self):
         """Test that MUSAPlatform is either MtmlMUSAPlatform or NonMtmlMUSAPlatform."""
         from vllm_musa_platform.musa import (
-            MUSAPlatform,
             MtmlMUSAPlatform,
+            MUSAPlatform,
             NonMtmlMUSAPlatform,
         )
 
@@ -282,8 +285,8 @@ class TestPlatformSelection:
     def test_platform_selection_based_on_mtml_availability(self):
         """Test that platform selection is correct based on MTML availability."""
         from vllm_musa_platform.musa import (
-            MUSAPlatform,
             MtmlMUSAPlatform,
+            MUSAPlatform,
             NonMtmlMUSAPlatform,
             mtml_available,
         )
@@ -340,4 +343,3 @@ class TestModuleExports:
         from vllm_musa_platform import musa_platform_plugin
 
         assert callable(musa_platform_plugin)
-

@@ -12,6 +12,7 @@ from typing import Any
 # Try to import pymtml
 try:
     import pymtml
+
     MTML_AVAILABLE = True
 except ImportError:
     MTML_AVAILABLE = False
@@ -48,6 +49,7 @@ __all__ = [
 
 class MTMLError(Exception):
     """Exception raised for MTML errors."""
+
     pass
 
 
@@ -197,7 +199,9 @@ def mtmlDeviceGetMtLinkState(handle: DeviceHandle, link_index: int) -> int:
     return pymtml.mtmlDeviceGetMtLinkState(handle, link_index)
 
 
-def mtmlDeviceGetMtLinkRemoteDevice(handle: DeviceHandle, link_index: int) -> DeviceHandle:
+def mtmlDeviceGetMtLinkRemoteDevice(
+    handle: DeviceHandle, link_index: int
+) -> DeviceHandle:
     """Get the remote device connected via MtLink.
 
     Args:
@@ -228,4 +232,3 @@ def is_mtml_available() -> bool:
         True if pymtml is installed and can be imported.
     """
     return MTML_AVAILABLE
-

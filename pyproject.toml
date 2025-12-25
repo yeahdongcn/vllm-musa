@@ -7,7 +7,7 @@ name = "vllm-musa"
 version = "0.1.0"
 description = "vLLM platform plugin for Moore Threads MUSA GPUs"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 requires-python = ">=3.9"
 authors = [
     {name = "vLLM Community"},
@@ -17,7 +17,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -37,8 +36,13 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-asyncio",
+    "pytest-cov",
     "ruff",
     "mypy",
+    "isort",
+    "black",
+    "build",
+    "twine",
 ]
 
 [project.entry-points."vllm.platform_plugins"]
@@ -66,3 +70,12 @@ warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["vllm_musa_platform"]
+skip_gitignore = true
+
+[tool.black]
+line-length = 88
+target-version = ["py39", "py310", "py311", "py312"]

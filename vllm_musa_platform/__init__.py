@@ -78,18 +78,16 @@ def _patch_torch_musa_compat() -> None:
         pass
 
 
-
-
 def _apply_vllm_patches() -> None:
     """Apply vLLM source patches for MUSA compatibility."""
     try:
         from .patches import apply_patches
+
         apply_patches()
     except Exception as e:
         import logging
-        logging.getLogger(__name__).warning(
-            f"Failed to apply vLLM patches: {e}"
-        )
+
+        logging.getLogger(__name__).warning(f"Failed to apply vLLM patches: {e}")
 
 
 def musa_platform_plugin() -> str | None:

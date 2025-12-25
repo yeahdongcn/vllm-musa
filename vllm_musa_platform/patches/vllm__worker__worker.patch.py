@@ -18,4 +18,3 @@ PATCHES = [
         'if self.device_config.device.type in ("cuda", "musa"):',
     ),
 ]
-

@@ -34,4 +34,3 @@ PATCHES = [
     # Fix annotated assignment in find_seq_idx function
     ("left: tl.int32 = 0", "left = 0"),
 ]
-

@@ -12,8 +12,11 @@ import pytest
 
 def _clear_mtml_modules():
     """Clear mtml-related modules from sys.modules."""
-    modules_to_remove = [k for k in sys.modules.keys()
-                         if k == "pymtml" or k.startswith("vllm_musa_platform")]
+    modules_to_remove = [
+        k
+        for k in sys.modules.keys()
+        if k == "pymtml" or k.startswith("vllm_musa_platform")
+    ]
     for mod in modules_to_remove:
         sys.modules.pop(mod, None)
 
@@ -47,6 +50,7 @@ class TestMtmlAvailability:
             with patch.object(builtins, "__import__", side_effect=mock_import):
                 # Re-import mtml with mocked import
                 import vllm_musa_platform.mtml as mtml_module
+
                 importlib.reload(mtml_module)
 
                 assert mtml_module.is_mtml_available() is False
@@ -64,6 +68,7 @@ class TestMtmlFunctionsWithRealPymtml:
         """Skip tests if pymtml is not available."""
         try:
             import pymtml
+
             yield
         except ImportError:
             pytest.skip("pymtml not available")
@@ -111,8 +116,9 @@ class TestMtmlFunctionsWithMock:
 
     def test_mtml_wrapper_function_signatures(self):
         """Test that MTML wrapper functions have correct signatures."""
-        from vllm_musa_platform import mtml
         import inspect
+
+        from vllm_musa_platform import mtml
 
         # Test function signatures exist
         assert callable(mtml.mtmlInit)
@@ -156,9 +162,12 @@ class TestMtmlErrors:
         try:
             with patch.object(builtins, "__import__", side_effect=mock_import):
                 import vllm_musa_platform.mtml as mtml_module
+
                 importlib.reload(mtml_module)
 
-                with pytest.raises(mtml_module.MTMLError, match="pymtml is not available"):
+                with pytest.raises(
+                    mtml_module.MTMLError, match="pymtml is not available"
+                ):
                     mtml_module.mtmlInit()
         finally:
             _clear_mtml_modules()
@@ -217,6 +226,7 @@ class TestMtmlMtLinkFunctions:
         """Skip tests if pymtml is not available."""
         try:
             import pymtml
+
             yield
         except ImportError:
             pytest.skip("pymtml not available")
@@ -251,4 +261,3 @@ class TestMtmlMtLinkFunctions:
                 pytest.skip("No MUSA devices available")
         finally:
             mtml.mtmlShutdown()
-
