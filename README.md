@@ -90,6 +90,8 @@ print(outputs[0].outputs[0].text)
 
 ## Testing
 
+### Unit Tests
+
 Run the test suite:
 
 ```bash
@@ -103,6 +105,98 @@ pytest tests/test_patches.py -v
 
 # Run with coverage
 pytest tests/ -v --cov=vllm_musa_platform --cov-report=term-missing
+```
+
+### Supported vLLM Versions
+
+This plugin supports multiple vLLM versions:
+
+| vLLM Version | PyTorch Version | Engine | Status |
+|--------------|-----------------|--------|--------|
+| 0.10.1.1     | 2.7.1           | V0/V1  | ✅ Supported |
+| 0.13.0       | 2.7.1           | V1 only | ✅ Supported |
+
+### Testing with Different vLLM Versions
+
+#### vLLM 0.10.1.1 (with torch 2.7.1)
+
+```bash
+# Install the plugin (vLLM 0.10.1.1 is installed automatically as a dependency)
+pip install -e .
+
+# Start the server
+vllm serve /path/to/model/
+
+# In another terminal, test inference
+curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "/path/to/model/", "prompt": "Hello!", "max_tokens": 50}'
+```
+
+#### vLLM 0.13.0 (with torch 2.7.1)
+
+> **Important:** Use `--no-deps` when upgrading vLLM to prevent torch from being replaced.
+> The MUSA container includes a pre-configured torch 2.7.1 that must not be overwritten.
+
+```bash
+# Install the plugin (vLLM 0.10.1.1 is installed automatically as a dependency)
+pip install -e .
+
+# Upgrade to vLLM 0.13.0 without reinstalling dependencies
+pip install vllm==0.13.0 --no-deps --upgrade
+
+# Install additional dependencies required by vLLM 0.13.0
+pip install 'depyf==0.20.0' 'llguidance>=1.3.0,<1.4.0' \
+            'lm-format-enforcer==0.11.3' 'outlines_core==0.2.11' \
+            'xgrammar==0.1.27' 'compressed-tensors==0.12.2' \
+            'model-hosting-container-standards<1.0.0,>=0.1.9' \
+            ijson anthropic mcp
+
+# Start the server
+vllm serve /path/to/model/
+
+# In another terminal, test inference
+curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "/path/to/model/", "prompt": "Hello!", "max_tokens": 50}'
+
+# Test chat completions
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "/path/to/model/", "messages": [{"role": "user", "content": "What is 2+2?"}], "max_tokens": 50}'
+```
+
+### Version-Specific Notes
+
+#### vLLM 0.10.x
+- Supports both V0 and V1 engines
+- Uses `VLLM_USE_V1=1` environment variable to enable V1 engine
+- The `vllm.worker.worker` module exists for V0 engine support
+
+#### vLLM 0.13.x
+- V1 is the default (and only) engine
+- The `vllm.worker` module was removed (V0 engine deprecated)
+- Requires additional dependencies: `depyf`, `llguidance`, `lm-format-enforcer`, `outlines_core`, `xgrammar`, `compressed-tensors`
+
+### Docker Testing
+
+For containerized testing with MUSA GPUs:
+
+```bash
+# Start a container with MUSA support
+docker run -d --net host --privileged --pid=host --shm-size 500g \
+  -v $PWD:/ws -w /ws \
+  -v /data/vllm:/home/dist \
+  --name musa-test \
+  sh-harbor.mthreads.com/mcctest/musa-compile:rc4.3.3-torch2.7-20251120 \
+  sleep infinity
+
+# Enter the container
+docker exec -it musa-test bash
+
+# Inside the container, install and test
+pip install -e /ws
+vllm serve /home/dist/your-model/
 ```
 
 ## Project Structure

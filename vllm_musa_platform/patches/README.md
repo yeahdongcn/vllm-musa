@@ -50,6 +50,40 @@ AttributeError("'AnnAssign' object has no attribute 'targets'")
 
 **Affected Function:** `find_seq_idx()` - Binary search helper for the unified attention kernel
 
+### vllm__v1__worker__gpu_worker.patch.py
+
+**Target:** `vllm.v1.worker.gpu_worker`
+
+**vLLM Versions:** 0.10.x and 0.13.x (all V1 engine versions)
+
+**Issue:** The V1 GPU worker only checks for `device.type == "cuda"`, which doesn't match MUSA devices
+
+**Fix:** Extend device type check to also accept "musa" device type
+
+### vllm__worker__worker.patch.py
+
+**Target:** `vllm.worker.worker`
+
+**vLLM Versions:** 0.10.x only (V0 engine - removed in 0.13.x)
+
+**Issue:** The V0 worker only checks for `device.type == "cuda"`, which doesn't match MUSA devices
+
+**Fix:** Extend device type check to also accept "musa" device type
+
+**Note:** This module doesn't exist in vLLM 0.13.0+ since the V0 engine was removed. The patch system automatically skips this patch on newer vLLM versions.
+
+## Version-Specific Patches
+
+Some patches are version-specific and will be automatically skipped if the target module doesn't exist:
+
+| Patch | vLLM 0.10.x | vLLM 0.13.x |
+|-------|-------------|-------------|
+| `vllm__attention__ops__triton_unified_attention` | ✅ Applied | ✅ Applied |
+| `vllm__v1__worker__gpu_worker` | ✅ Applied | ✅ Applied |
+| `vllm__worker__worker` | ✅ Applied | ⏭️ Skipped (module doesn't exist) |
+
+When a patch is skipped due to a missing module, a debug message is logged (not a warning), as this is expected behavior for version-specific patches.
+
 ## How Patches Are Applied
 
 1. When the MUSA platform plugin is loaded, it calls `apply_patches()` from this module

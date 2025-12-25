@@ -459,7 +459,15 @@ class MUSAPlatformBase(Platform):
     def check_and_update_config(cls, vllm_config: "VllmConfig") -> None:
         """Check and update the configuration for MUSA platform."""
         from vllm import envs
-        from vllm.config import CompilationLevel, CUDAGraphMode
+        from vllm.config import CUDAGraphMode
+
+        # Try to import CompilationMode (vLLM 0.13+) or CompilationLevel (older)
+        try:
+            from vllm.config import CompilationMode
+            NO_COMPILATION = CompilationMode.NONE
+        except ImportError:
+            from vllm.config import CompilationLevel
+            NO_COMPILATION = CompilationLevel.NO_COMPILATION
 
         # Register MUSA cache ops (must be done after platform init is complete)
         _register_musa_cache_ops()
@@ -476,8 +484,14 @@ class MUSAPlatformBase(Platform):
             cache_config.block_size = 16
 
         # Disable torch.compile for MUSA (device type not fully supported)
-        if envs.VLLM_USE_V1 and model_config is not None:
-            vllm_config.compilation_config.level = CompilationLevel.NO_COMPILATION  # noqa: E501
+        # In vLLM 0.13+, V1 is the default engine; in older versions check VLLM_USE_V1
+        use_v1 = getattr(envs, 'VLLM_USE_V1', True)  # Default to True for 0.13+
+        if use_v1 and model_config is not None:
+            # Use 'level' for older vLLM, 'mode' for newer vLLM 0.13+
+            if hasattr(vllm_config.compilation_config, 'mode'):
+                vllm_config.compilation_config.mode = NO_COMPILATION
+            else:
+                vllm_config.compilation_config.level = NO_COMPILATION
 
         # Disable CUDA graphs for MUSA (no CUDA runtime)
         compilation_config = vllm_config.compilation_config
@@ -514,13 +528,15 @@ class MUSAPlatformBase(Platform):
     def get_attn_backend_cls(
         cls,
         selected_backend: "_Backend",
-        head_size: int,
-        dtype: torch.dtype,
-        kv_cache_dtype: Optional[str],
-        block_size: int,
-        use_v1: bool,
-        use_mla: bool,
-        has_sink: bool,
+        attn_selector_config: Optional["AttentionSelectorConfig"] = None,
+        # Legacy parameters for vLLM < 0.13 compatibility
+        head_size: Optional[int] = None,
+        dtype: Optional[torch.dtype] = None,
+        kv_cache_dtype: Optional[str] = None,
+        block_size: Optional[int] = None,
+        use_v1: Optional[bool] = None,
+        use_mla: Optional[bool] = None,
+        has_sink: Optional[bool] = None,
     ) -> str:
         """Get the attention backend class for MUSA.
 
@@ -529,6 +545,8 @@ class MUSAPlatformBase(Platform):
         On MUSA, we always use the Triton V1 attention backend regardless
         of V0/V1 engine mode, as it's the only backend that works with
         the MUSA Triton implementation.
+
+        Supports both vLLM 0.10.x (legacy params) and 0.13+ (attn_selector_config)
         """
         # Always use Triton V1 attention backend for MUSA
         # This works because the V1 Triton backend uses pure Triton kernels

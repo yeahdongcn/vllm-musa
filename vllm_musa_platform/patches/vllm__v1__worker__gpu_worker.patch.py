@@ -10,9 +10,15 @@ to also accept "musa" device type.
 
 PATCHES = [
     # Patch init_device to support musa device type (V1 worker)
+    # For vLLM 0.10.x
     (
         'if self.device_config.device.type == "cuda":',
         'if self.device_config.device.type in ("cuda", "musa"):',
+    ),
+    # For vLLM 0.13+
+    (
+        'if isinstance(device, torch.device) and device.type == "cuda":',
+        'if isinstance(device, torch.device) and device.type in ("cuda", "musa"):',
     ),
     # Use platform-specific device string instead of hardcoded "cuda"
     (
