@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vllm-musa"
+version = "0.1.0"
+description = "vLLM platform plugin for Moore Threads MUSA GPUs"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
+authors = [
+    {name = "vLLM Community"},
+]
+keywords = ["vllm", "musa", "moore-threads", "llm", "inference"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "vllm",
+    "torch==2.7.1",  # Pinned: torch_musa requires exactly 2.7.1
+    "torchada",
+    "mthreads-ml-py",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+]
+
+[project.entry-points."vllm.platform_plugins"]
+musa = "vllm_musa_platform:musa_platform_plugin"
+
+[project.urls]
+Homepage = "https://github.com/vllm-project/vllm"
+Repository = "https://github.com/vllm-project/vllm"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vllm_musa_platform*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
