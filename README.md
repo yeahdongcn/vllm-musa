@@ -209,10 +209,12 @@ vllm-musa/
 │   ├── __init__.py             # Plugin entry point
 │   ├── mtml.py                 # MTML wrapper (device management)
 │   ├── musa.py                 # MUSA platform implementation
-│   └── patches/                # Triton compatibility patches
+│   └── patches/                # Compatibility patches
 │       ├── __init__.py         # Patch application logic
 │       ├── README.md           # Patch documentation
-│       └── vllm__attention__ops__triton_unified_attention.patch.py
+│       ├── vllm__attention__ops__triton_unified_attention.patch.py
+│       ├── vllm__v1__worker__gpu_worker.patch.py
+│       └── vllm__worker__worker.patch.py
 └── tests/                      # Test suite
     ├── conftest.py             # Pytest fixtures
     ├── test_mtml.py            # MTML wrapper tests

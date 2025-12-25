@@ -60,6 +60,8 @@ AttributeError("'AnnAssign' object has no attribute 'targets'")
 
 **Fix:** Extend device type check to also accept "musa" device type
 
+**Note:** No patch is needed for `torch.device("cuda:X")` because torchada automatically aliases it to `torch.device("musa:X")` when imported.
+
 ### vllm__worker__worker.patch.py
 
 **Target:** `vllm.worker.worker`
@@ -70,7 +72,7 @@ AttributeError("'AnnAssign' object has no attribute 'targets'")
 
 **Fix:** Extend device type check to also accept "musa" device type
 
-**Note:** This module doesn't exist in vLLM 0.13.0+ since the V0 engine was removed. The patch system automatically skips this patch on newer vLLM versions.
+**Note:** This module doesn't exist in vLLM 0.13.0+ since the V0 engine was removed. The patch system automatically skips this patch on newer vLLM versions. No patch is needed for `torch.device("cuda:X")` because torchada automatically aliases it to `torch.device("musa:X")` when imported.
 
 ## Version-Specific Patches
 
