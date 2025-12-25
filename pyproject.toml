@@ -28,7 +28,7 @@ classifiers = [
 dependencies = [
     "vllm",
     "torch==2.7.1",  # Pinned: torch_musa requires exactly 2.7.1
-    "torchada",
+    "torchada>=0.1.9",
     "mthreads-ml-py",
 ]
 
