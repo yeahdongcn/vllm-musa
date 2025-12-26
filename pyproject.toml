@@ -29,7 +29,7 @@ dependencies = [
     "vllm",
     "torch==2.7.1",  # Pinned: torch_musa requires exactly 2.7.1
     "torchada>=0.1.9",
-    "mthreads-ml-py",
+    "mthreads-ml-py>=2.2.5",
 ]
 
 [project.optional-dependencies]

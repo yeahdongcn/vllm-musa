@@ -3,9 +3,12 @@
 """
 MUSA Platform implementation for vLLM.
 
+Code inside this file can safely assume MUSA platform, e.g. importing
+pymtml. However, it should not initialize MUSA context.
+
 This module provides the MUSAPlatform class that enables vLLM to run on
 Moore Threads MUSA GPUs. It uses torchada for CUDA→MUSA compatibility
-and pymtml for device management.
+and pymtml (pynvml-compatible) for device management.
 """
 
 import os
@@ -17,18 +20,21 @@ import torch
 from typing_extensions import ParamSpec
 from vllm.logger import init_logger
 
+try:
+    import pymtml as pynvml  # MUSA equivalent of pynvml
+except ImportError:
+    pynvml = None  # type: ignore
+
 __all__ = [
-    # Main platform class (auto-selected based on MTML availability)
+    # Main platform class (auto-selected based on mtml availability)
     "MUSAPlatform",
     # Platform implementations
     "MUSAPlatformBase",
     "MtmlMUSAPlatform",
     "NonMtmlMUSAPlatform",
     # Utilities
-    "with_mtml_context",
+    "with_nvml_context",
     "mtml_available",
-    # Re-exported from mtml
-    "mtml",
 ]
 
 if TYPE_CHECKING:
@@ -256,56 +262,14 @@ def _register_musa_cache_ops():
         return False
 
 
-def _import_mtml():
-    """Import mtml wrapper."""
-    try:
-        from . import mtml
-
-        return mtml
-    except ImportError:
-        return None
-
-
-mtml = _import_mtml()
-
-
-# Reference-counted MTML context manager
-_mtml_ref_count = 0
-_mtml_lock = None
-
-
-def _get_mtml_lock():
-    """Get or create the MTML lock."""
-    global _mtml_lock
-    if _mtml_lock is None:
-        import threading
-
-        _mtml_lock = threading.Lock()
-    return _mtml_lock
-
-
-def with_mtml_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
-    """Decorator to wrap functions with MTML init/shutdown (reference counted)."""
-
+def with_nvml_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
     @wraps(fn)
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        global _mtml_ref_count
-        if mtml is None or not mtml.is_mtml_available():
-            raise RuntimeError("MTML is not available")
-
-        lock = _get_mtml_lock()
-        with lock:
-            if _mtml_ref_count == 0:
-                mtml.mtmlInit()
-            _mtml_ref_count += 1
-
+        pynvml.nvmlInit()
         try:
             return fn(*args, **kwargs)
         finally:
-            with lock:
-                _mtml_ref_count -= 1
-                if _mtml_ref_count == 0:
-                    mtml.mtmlShutdown()
+            pynvml.nvmlShutdown()
 
     return wrapper
 
@@ -653,26 +617,31 @@ class MUSAPlatformBase(Platform):
         return True
 
 
-# MTML-based implementation (similar to NVML for CUDA)
+# MTML utils
+# Note that MTML is not affected by `MUSA_VISIBLE_DEVICES`,
+# all the related functions work on real physical device ids.
+# The major benefit of using MTML is that it will not initialize MUSA context.
 class MtmlMUSAPlatform(MUSAPlatformBase):
-    """MUSA platform using MTML for device queries."""
+    """MUSA platform using MTML (pymtml) for device queries.
+
+    This is equivalent to NvmlCudaPlatform in cuda.py, using pymtml's
+    pynvml-compatible API.
+    """
 
     @classmethod
     @cache
-    @with_mtml_context
+    @with_nvml_context
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability | None:
-        """Get device capability for MUSA device."""
-        # MUSA devices use a different capability scheme
-        # Return a reasonable default that enables FP8 support (3.1+)
         try:
-            # Use device capability 3.1 as default for MUSA GPUs
-            # This enables FP8 support as per user's specification
-            return DeviceCapability(major=3, minor=1)
+            physical_device_id = cls.device_id_to_physical_device_id(device_id)
+            handle = pynvml.nvmlDeviceGetHandleByIndex(physical_device_id)
+            major, minor = pynvml.nvmlDeviceGetCudaComputeCapability(handle)
+            return DeviceCapability(major=major, minor=minor)
         except RuntimeError:
             return None
 
     @classmethod
-    @with_mtml_context
+    @with_nvml_context
     def has_device_capability(
         cls,
         capability: tuple[int, int] | int,
@@ -684,65 +653,62 @@ class MtmlMUSAPlatform(MUSAPlatformBase):
             return False
 
     @classmethod
-    @with_mtml_context
+    @with_nvml_context
     def get_device_name(cls, device_id: int = 0) -> str:
         physical_device_id = cls.device_id_to_physical_device_id(device_id)
-        handle = mtml.mtmlDeviceGetHandleByIndex(physical_device_id)
-        return mtml.mtmlDeviceGetName(handle)
+        return cls._get_physical_device_name(physical_device_id)
 
     @classmethod
-    @with_mtml_context
+    @with_nvml_context
     def get_device_uuid(cls, device_id: int = 0) -> str:
         physical_device_id = cls.device_id_to_physical_device_id(device_id)
-        handle = mtml.mtmlDeviceGetHandleByIndex(physical_device_id)
-        return mtml.mtmlDeviceGetUUID(handle)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(physical_device_id)
+        return pynvml.nvmlDeviceGetUUID(handle)
 
     @classmethod
-    @with_mtml_context
+    @with_nvml_context
     def get_device_total_memory(cls, device_id: int = 0) -> int:
         physical_device_id = cls.device_id_to_physical_device_id(device_id)
-        handle = mtml.mtmlDeviceGetHandleByIndex(physical_device_id)
-        return mtml.mtmlDeviceGetMemoryInfo(handle)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(physical_device_id)
+        return int(pynvml.nvmlDeviceGetMemoryInfo(handle).total)
 
     @classmethod
-    @with_mtml_context
+    @with_nvml_context
     def is_fully_connected(cls, physical_device_ids: list[int]) -> bool:
-        """Check if devices are fully connected via MtLink (1 hop)."""
-        handles = [mtml.mtmlDeviceGetHandleByIndex(i) for i in physical_device_ids]
+        """Query if the set of gpus are fully connected by MtLink (1 hop)."""
+        handles = [pynvml.nvmlDeviceGetHandleByIndex(i) for i in physical_device_ids]
         for i, handle in enumerate(handles):
-            try:
-                mtlink_spec = mtml.mtmlDeviceGetMtLinkSpec(handle)
-                link_num = mtlink_spec.linkNum
-            except Exception:
-                return False
-
-            for link_idx in range(link_num):
-                try:
-                    state = mtml.mtmlDeviceGetMtLinkState(handle, link_idx)
-                    if state != mtml.MTML_MTLINK_STATE_UP:
-                        continue
-                    remote = mtml.mtmlDeviceGetMtLinkRemoteDevice(handle, link_idx)
-                    # Check if remote device is in our set
-                    remote_idx = mtml.mtmlDeviceGetHandleByIndex(
-                        physical_device_ids[0]
-                    )  # Placeholder
-                except Exception:
-                    continue
-
-        # For now, assume connected if we can query all devices
+            for j, peer_handle in enumerate(handles):
+                if i < j:
+                    try:
+                        p2p_status = pynvml.nvmlDeviceGetP2PStatus(
+                            handle,
+                            peer_handle,
+                            pynvml.NVML_P2P_CAPS_INDEX_NVLINK,
+                        )
+                        if p2p_status != pynvml.NVML_P2P_STATUS_OK:
+                            return False
+                    except pynvml.NVMLError:
+                        logger.exception(
+                            "MtLink detection failed. This is normal if "
+                            "your machine has no MtLink equipped."
+                        )
+                        return False
         return True
 
     @classmethod
-    @with_mtml_context
-    def log_warnings(cls):
-        """Log warnings about device configuration."""
-        device_count = mtml.mtmlDeviceGetCount()
-        if device_count > 1:
-            device_names = []
-            for i in range(device_count):
-                handle = mtml.mtmlDeviceGetHandleByIndex(i)
-                device_names.append(mtml.mtmlDeviceGetName(handle))
+    def _get_physical_device_name(cls, device_id: int = 0) -> str:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+        return pynvml.nvmlDeviceGetName(handle)
 
+    @classmethod
+    @with_nvml_context
+    def log_warnings(cls):
+        device_count: int = pynvml.nvmlDeviceGetCount()
+        if device_count > 1:
+            device_names = [
+                cls._get_physical_device_name(i) for i in range(device_count)
+            ]
             if (
                 len(set(device_names)) > 1
                 and os.environ.get("MUSA_DEVICE_ORDER") != "PCI_BUS_ID"
@@ -776,7 +742,7 @@ class NonMtmlMUSAPlatform(MUSAPlatformBase):
         return device_props.total_memory
 
     @classmethod
-    def is_fully_connected(cls, physical_device_ids: list[int]) -> bool:
+    def is_fully_connected(cls, _physical_device_ids: list[int]) -> bool:
         """Without MTML, we cannot detect MtLink connectivity."""
         logger.warning(
             "MtLink detection not possible without MTML. "
@@ -785,26 +751,16 @@ class NonMtmlMUSAPlatform(MUSAPlatformBase):
         return False
 
 
-# Autodetect MTML availability and select appropriate platform
-def _detect_mtml_available() -> bool:
-    """Check if MTML is available."""
-    if mtml is None or not mtml.is_mtml_available():
-        return False
-    try:
-        mtml.mtmlInit()
-        mtml.mtmlShutdown()
-        return True
-    except Exception:
-        return False
+# Autodetect MTML availability
+# Note: We don't call nvmlShutdown() here because pymtml has a bug where
+# nvmlInit() fails after nvmlShutdown() has been called.
+mtml_available = False
+try:
+    pynvml.nvmlInit()
+    mtml_available = True
+except Exception:
+    mtml_available = False
 
-
-mtml_available = _detect_mtml_available()
-
-# Select the appropriate platform based on MTML availability
 MUSAPlatform = MtmlMUSAPlatform if mtml_available else NonMtmlMUSAPlatform
 
-# Log warnings on module load
-try:
-    MUSAPlatform.log_warnings()
-except Exception:
-    pass
+MUSAPlatform.log_warnings()

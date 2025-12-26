@@ -176,16 +176,16 @@ class TestNonMtmlMUSAPlatform:
 
 
 class TestWithMtmlContext:
-    """Tests for the with_mtml_context decorator."""
+    """Tests for the with_nvml_context decorator."""
 
     def test_decorator_returns_function_result(self):
         """Test that the decorator returns the wrapped function's result."""
-        from vllm_musa_platform.musa import mtml, with_mtml_context
+        from vllm_musa_platform.musa import mtml_available, with_nvml_context
 
-        if mtml is None or not mtml.is_mtml_available():
+        if not mtml_available:
             pytest.skip("MTML not available")
 
-        @with_mtml_context
+        @with_nvml_context
         def test_func():
             return "success"
 
@@ -194,9 +194,9 @@ class TestWithMtmlContext:
 
     def test_decorator_preserves_function_name(self):
         """Test that the decorator preserves the wrapped function's name."""
-        from vllm_musa_platform.musa import with_mtml_context
+        from vllm_musa_platform.musa import with_nvml_context
 
-        @with_mtml_context
+        @with_nvml_context
         def my_test_function():
             return "test"
 
@@ -208,14 +208,12 @@ class TestMtmlMUSAPlatform:
 
     def test_get_device_capability_returns_3_1(self, mock_pymtml):
         """Test get_device_capability returns (3, 1) for FP8 support."""
-        if "vllm_musa_platform.mtml" in sys.modules:
-            del sys.modules["vllm_musa_platform.mtml"]
         if "vllm_musa_platform.musa" in sys.modules:
             del sys.modules["vllm_musa_platform.musa"]
 
-        from vllm_musa_platform.musa import MtmlMUSAPlatform, mtml
+        from vllm_musa_platform.musa import MtmlMUSAPlatform, mtml_available
 
-        if not mtml.is_mtml_available():
+        if not mtml_available:
             pytest.skip("MTML not available")
 
         # Clear cache
@@ -228,9 +226,9 @@ class TestMtmlMUSAPlatform:
 
     def test_get_device_name(self):
         """Test get_device_name returns a string."""
-        from vllm_musa_platform.musa import MtmlMUSAPlatform, mtml
+        from vllm_musa_platform.musa import MtmlMUSAPlatform, mtml_available
 
-        if mtml is None or not mtml.is_mtml_available():
+        if not mtml_available:
             pytest.skip("MTML not available")
 
         name = MtmlMUSAPlatform.get_device_name(0)
@@ -242,9 +240,9 @@ class TestMtmlMUSAPlatform:
 
     def test_get_device_uuid(self):
         """Test get_device_uuid returns a valid UUID string."""
-        from vllm_musa_platform.musa import MtmlMUSAPlatform, mtml
+        from vllm_musa_platform.musa import MtmlMUSAPlatform, mtml_available
 
-        if mtml is None or not mtml.is_mtml_available():
+        if not mtml_available:
             pytest.skip("MTML not available")
 
         uuid = MtmlMUSAPlatform.get_device_uuid(0)
@@ -256,9 +254,9 @@ class TestMtmlMUSAPlatform:
 
     def test_get_device_total_memory(self):
         """Test get_device_total_memory returns a positive integer."""
-        from vllm_musa_platform.musa import MtmlMUSAPlatform, mtml
+        from vllm_musa_platform.musa import MtmlMUSAPlatform, mtml_available
 
-        if mtml is None or not mtml.is_mtml_available():
+        if not mtml_available:
             pytest.skip("MTML not available")
 
         memory = MtmlMUSAPlatform.get_device_total_memory(0)
@@ -329,9 +327,8 @@ class TestModuleExports:
             "MUSAPlatformBase",
             "MtmlMUSAPlatform",
             "NonMtmlMUSAPlatform",
-            "with_mtml_context",
+            "with_nvml_context",
             "mtml_available",
-            "mtml",
         ]
 
         for export in expected_exports:
