@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vllm-musa"
-version = "0.1.0"
+version = "0.1.1"
 description = "vLLM platform plugin for Moore Threads MUSA GPUs"
 readme = "README.md"
 license = "Apache-2.0"

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """
-MUSA Platform implementation for vLLM.
+MUSA (Meta-computing Unified System Architecture) Platform implementation
+for vLLM.
 
 Code inside this file can safely assume MUSA platform, e.g. importing
 pymtml. However, it should not initialize MUSA context.

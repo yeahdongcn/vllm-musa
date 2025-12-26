@@ -4,7 +4,7 @@ A vLLM platform plugin that enables running vLLM on Moore Threads MUSA GPUs.
 
 ## Overview
 
-This plugin provides MUSA (Moore Threads Unified Software Architecture) support for vLLM through:
+This plugin provides MUSA (Meta-computing Unified System Architecture) support for vLLM through:
 
 - **torchada**: CUDA→MUSA compatibility layer for PyTorch
 - **pymtml**: Moore Threads Management Library for device queries
@@ -51,7 +51,7 @@ python -c "from vllm_musa_platform import musa_platform_plugin; print('Plugin lo
 Check if MTML (device management) is available:
 
 ```bash
-python -c "from vllm_musa_platform import mtml; print(f'MTML available: {mtml.is_mtml_available()}')"
+python -c "from vllm_musa_platform.musa import mtml_available; print(f'MTML available: {mtml_available}')"
 ```
 
 ## Usage
@@ -99,7 +99,6 @@ Run the test suite:
 pytest tests/ -v
 
 # Run specific test file
-pytest tests/test_mtml.py -v
 pytest tests/test_musa.py -v
 pytest tests/test_patches.py -v
 
@@ -207,7 +206,6 @@ vllm-musa/
 ├── README.md                   # This file
 ├── vllm_musa_platform/         # Main package
 │   ├── __init__.py             # Plugin entry point
-│   ├── mtml.py                 # MTML wrapper (device management)
 │   ├── musa.py                 # MUSA platform implementation
 │   └── patches/                # Compatibility patches
 │       ├── __init__.py         # Patch application logic
@@ -217,7 +215,6 @@ vllm-musa/
 │       └── vllm__worker__worker.patch.py
 └── tests/                      # Test suite
     ├── conftest.py             # Pytest fixtures
-    ├── test_mtml.py            # MTML wrapper tests
     ├── test_musa.py            # Platform tests
     └── test_patches.py         # Patch system tests
 ```
