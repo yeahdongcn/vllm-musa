@@ -109,6 +109,15 @@ def register_attention_backends() -> None:
             "MUSATurboQuantAttentionBackend"
         ),
     )
+    # MUSA-0094: tree drafting via a MUSA-routed TreeAttention backend
+    # (Triton unified_attention is already MUSA-patched; reshape_and_cache_flash
+    # is wired through fa_utils.reshape_and_cache_flash).
+    register_backend(
+        AttentionBackendEnum.TREE_ATTN,
+        class_path=(
+            "vllm_musa.v1.attention.backends.tree_attn.MUSATreeAttentionBackend"
+        ),
+    )
 
 
 class MUSAPlatformBase(Platform):
