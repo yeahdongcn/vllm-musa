@@ -482,19 +482,60 @@ class EagleFullLoopRunner:
         attn_metadata_array: list,
         batch_size: int,
     ) -> None:
-        """Run one eager pass through the N-step loop before graph capture.
+        """Run TWO eager passes through the N-step loop with full sync between,
+        BEFORE graph capture.
 
-        Required by torch.cuda.graph: kernels must be compiled and allocator
-        pages warm before the capture context opens. Pattern from the Q1 smoke
-        (generated/musa0090_impl/step1_5-q1-cudagraph-smoke-result.md): run on
-        a side stream, join before capture.
+        MUSA-0109 layer-4 fix (2026-05-17): match SGLang's `_capture_init`
+        pattern (sglang/python/sglang/srt/speculative/eagle_draft_cuda_graph_runner.py:217)
+        which is the difference between "MUSA-0090 always crashes" and
+        "SGLang works on similar hardware". Specifically:
+
+          1. torch.cuda.synchronize() — drain all pending GPU work
+          2. tp_group.barrier() — cross-rank sync; ensures all TP ranks
+             see the same allocator state before next warmup
+          3. run_once_fn() — actually exercise the workload
+          4. on_after_cuda_graph_warmup hook — backend-specific cleanup
+          5. REPEAT 2x — settle JIT/Inductor compiles, allocator pool
+             pages, and TP comm channels fully BEFORE capture
+
+        Hypothesis: torch_musa's CUDAGraph + allocator interaction bug
+        triggers when capture happens with un-settled allocator state.
+        SGLang's 2x warmup + TP barrier pattern ensures the state is
+        stable before capture opens.
         """
+        from vllm.distributed import get_tp_group
+
+        try:
+            tp_group = get_tp_group()
+            tp_barrier = lambda: tp_group.barrier()
+        except Exception as exc:
+            logger.debug("TP group unavailable for warmup barrier: %s", exc)
+            tp_barrier = lambda: None
+
+        # Side-stream warmup pattern (preserved from Q1 smoke)
         s = torch.cuda.Stream()
-        s.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(s):
-            self._run_n_step_inner(buffers, attn_metadata_array, batch_size)
-        torch.cuda.current_stream().wait_stream(s)
+        for warmup_iter in range(2):
+            torch.cuda.synchronize()
+            tp_barrier()
+            s.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(s):
+                self._run_n_step_inner(buffers, attn_metadata_array, batch_size)
+            torch.cuda.current_stream().wait_stream(s)
+            torch.cuda.synchronize()
+            # Per-attn-backend hook (SGLang's on_after_cuda_graph_warmup)
+            hook = getattr(
+                getattr(self.proposer, "draft_attn_backend", None),
+                "on_after_cuda_graph_warmup",
+                None,
+            )
+            if hook is not None:
+                try:
+                    hook()
+                except Exception as exc:
+                    logger.debug("on_after_cuda_graph_warmup raised: %s", exc)
+        # Final barrier + sync to ensure all ranks see settled state
         torch.cuda.synchronize()
+        tp_barrier()
 
     def _capture_n_step_loop(
         self,
