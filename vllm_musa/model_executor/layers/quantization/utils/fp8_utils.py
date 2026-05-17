@@ -131,6 +131,37 @@ def _silu_fp8_fusion_max_tokens() -> int:
         return 512
 
 
+def _sphere_silu_fp8_enabled() -> bool:
+    value = os.getenv("VLLM_MUSA_SPHERE_SILU_FP8", "1").lower()
+    return value not in ("0", "false", "no", "off")
+
+
+def _sphere_silu_fp8_max_tokens() -> int:
+    try:
+        return int(os.getenv("VLLM_MUSA_SPHERE_SILU_FP8_MAX_TOKENS", "256"))
+    except ValueError:
+        return 256
+
+
+_SPHERE_SILU_FP8_MOD = None
+_SPHERE_SILU_FP8_PROBE_DONE = False
+
+
+def _maybe_sphere_silu_fp8():
+    """Lazy-load `sphere_silu_post_quant`; cache success / failure once per process."""
+    global _SPHERE_SILU_FP8_MOD, _SPHERE_SILU_FP8_PROBE_DONE
+    if _SPHERE_SILU_FP8_PROBE_DONE:
+        return _SPHERE_SILU_FP8_MOD
+    _SPHERE_SILU_FP8_PROBE_DONE = True
+    try:
+        import sphere_silu_post_quant  # noqa: F401
+
+        _SPHERE_SILU_FP8_MOD = sphere_silu_post_quant
+    except (ImportError, ModuleNotFoundError):
+        _SPHERE_SILU_FP8_MOD = None
+    return _SPHERE_SILU_FP8_MOD
+
+
 def silu_mul_per_token_group_quant_fp8_musa(
     input: torch.Tensor,
     output: torch.Tensor | None = None,
@@ -174,16 +205,51 @@ def silu_mul_per_token_group_quant_fp8_musa(
 
     tokens = input.shape[0]
     hidden = input.shape[-1] // 2
+
+    fp8_dtype = current_platform.fp8_dtype()
+
+    # MUSA-0101: sphere_silu_post_quant_v1 is ~1.6-1.9x faster than the
+    # _C_musa_ops kernel for small-M (tokens <= 256, hidden_dim == 3072,
+    # row-major non-UE8M0 scale). Bit-exact dequant match validated at
+    # M=128. If the caller pre-allocated `output`, we must copy into it
+    # (the copy overhead negates most of the win, so we still try it but
+    # the bigger gain is when output is None).
+    if (
+        _sphere_silu_fp8_enabled()
+        and tokens <= _sphere_silu_fp8_max_tokens()
+        and hidden == 1536  # M2.5 gate_up: input [tokens, 3072] -> out [tokens, 1536]
+    ):
+        sphere = _maybe_sphere_silu_fp8()
+        if sphere is not None:
+            sq, ss = sphere.silu_post_quant_v1(input)
+            expected_q_shape = (tokens, hidden)
+            expected_s_shape = (tokens, hidden // group_size)
+            if (
+                sq.shape == expected_q_shape
+                and ss.shape == expected_s_shape
+                and sq.dtype == fp8_dtype
+                and ss.dtype == torch.float32
+            ):
+                if output is None:
+                    return sq, ss
+                if (
+                    output.shape == expected_q_shape
+                    and output.is_contiguous()
+                    and output.dtype == fp8_dtype
+                ):
+                    output.copy_(sq)
+                    return output, ss
+
     if output is None:
         output = torch.empty(
             (tokens, hidden),
             device=input.device,
-            dtype=current_platform.fp8_dtype(),
+            dtype=fp8_dtype,
         )
     elif (
         output.shape != (tokens, hidden)
         or not output.is_contiguous()
-        or output.dtype != current_platform.fp8_dtype()
+        or output.dtype != fp8_dtype
     ):
         return fallback()
 
