@@ -27,7 +27,16 @@ classifiers = [
 ]
 dependencies = [
     "torch",
-    "torch_musa",
+    # MUSA-0109: pin torch_musa to 2.9.0 until the CUDAGraph + memory allocator
+    # interaction bug is fixed upstream. Symptom: any CUDAGraph-capture path
+    # outside vllm's standard PIECEWISE flow (e.g. MUSA-0090 EagleFullLoopRunner)
+    # triggers "MUSA error: unknown error" + "MUDNN err 999 = unknown error" on
+    # the first post-capture allocation. Reproduced 2026-05-17 with all 4
+    # layer-fixes shipped (vllm-musa@e45b79f); see
+    # generated/musa0109/musa0090-reproduction.md for the full trace.
+    # When torch_musa fixes the bug, this pin can move forward and the
+    # VLLM_MUSA_EAGLE_RUNNER=1 path becomes safe to enable.
+    "torch_musa==2.9.0",
     "torchada>=0.1.52",
     "mate>=0.2.0",
     "flash_attn_3>=0.1.4",
