@@ -460,10 +460,17 @@ class EagleFullLoopRunner:
         # updates happen inside this one call.
         ctx.graph.replay()
 
-        # Output is a view into the persistent buffer; caller must consume
-        # before the next replay overwrites it.
+        # MUSA-0090 layer-2 fix (2026-05-17): clone the output OUT of the
+        # CUDAGraph memory pool. vllm's _copy_draft_token_ids_to_cpu does the
+        # H2D copy on a dedicated `draft_token_ids_copy_stream` (not the default
+        # stream), and MUSA's MUDNN fails ("err 999 = unknown error") when
+        # copying from pool memory across streams. Cloning into a fresh
+        # allocation outside the pool fixes this. The clone is small
+        # (`[bs, num_steps]` int32 = ~12 bytes for bs=1) and runs on the
+        # default stream so subsequent cross-stream sync works.
+        out = ctx.buffers.draft_token_ids_out[:batch_size].clone()
         return EagleFullLoopReplayResult(
-            draft_token_ids=ctx.buffers.draft_token_ids_out[:batch_size],
+            draft_token_ids=out,
             batch_size=batch_size,
         )
 
