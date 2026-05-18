@@ -42,10 +42,18 @@ def maybe_register_musa_template_heuristics() -> None:
     global _REGISTERED
     if _REGISTERED:
         return
-    if os.getenv("VLLM_MUSA_DISABLE_INDUCTOR_HEURISTICS", "0") == "1":
+    # MUSA-0087: registration is DEFAULT-OFF because the MUSA mm/bmm
+    # heuristic surfaces a `RuntimeError: MUSA error: unknown error` in
+    # Eagle3 draft compile (scalar_tensor lowering) at TP=8. Reproduced
+    # in the M2.5 SOTA perf-sweep on yeahdongcn60 (2026-05-18). Opt in
+    # via VLLM_MUSA_ENABLE_INDUCTOR_HEURISTICS=1 for benchmark probes
+    # that don't trigger the crash.
+    if os.getenv("VLLM_MUSA_ENABLE_INDUCTOR_HEURISTICS", "0") != "1":
         logger.info_once(
-            "MUSA-0087: Inductor template heuristic registration disabled "
-            "via VLLM_MUSA_DISABLE_INDUCTOR_HEURISTICS=1.",
+            "MUSA-0087: Inductor template heuristic registration is "
+            "default-off (Eagle3 draft compile crash on TP=8 M2.5). "
+            "Set VLLM_MUSA_ENABLE_INDUCTOR_HEURISTICS=1 to opt in for "
+            "non-Eagle3 workloads."
         )
         _REGISTERED = True
         return
