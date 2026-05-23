@@ -118,12 +118,28 @@ class TreeAttentionMetadata:
         q_start_loc = self.query_start_loc[self.num_decodes :]
         q_seqlens = torch.diff(q_start_loc)
         kv_seqlens = self.seq_lens[self.num_decodes :]
+        # MUSA-0128: when the metadata covers ONLY prefills (num_decodes == 0),
+        # the prefill subset IS the full set, so the per-subset max equals
+        # the already-computed full-batch max stored on self (originally
+        # populated from common_attn_metadata.max_{query,seq}_len, which are
+        # CPU ints). Reusing those avoids two .item() host syncs per access
+        # — under the cookbook 4k/1k BS=1 recipe this branch is the only one
+        # that ever fires, because each engine iter is either pure-prefill
+        # (initial 4k) or pure-decode (the 1024 generation iters). For the
+        # rare mixed-batch case the existing .item() fallback preserves
+        # correctness (subset max may differ from full max).
+        if self.num_decodes == 0:
+            max_query_len = self.max_query_len
+            max_seq_len = self.max_seq_len
+        else:
+            max_query_len = int(q_seqlens.max().item())
+            max_seq_len = int(kv_seqlens.max().item())
         # Construct & cache prefill-phase attention metadata structure
         self._cached_prefill_metadata = TreeAttentionMetadata(
             num_actual_tokens=self.num_prefill_tokens,
-            max_query_len=int(q_seqlens.max().item()),
+            max_query_len=max_query_len,
             query_start_loc=q_start_loc - q_start_loc[0],
-            max_seq_len=int(kv_seqlens.max().item()),
+            max_seq_len=max_seq_len,
             seq_lens=kv_seqlens,
             block_table=self.block_table[self.num_decodes :],
             slot_mapping=self.slot_mapping[self.num_decode_tokens :],
@@ -143,12 +159,23 @@ class TreeAttentionMetadata:
         q_start_loc = self.query_start_loc[: self.num_decodes + 1]
         q_seqlens = torch.diff(q_start_loc)
         kv_seqlens = self.seq_lens[: self.num_decodes]
+        # MUSA-0128: when the metadata covers ONLY decodes (num_prefills == 0),
+        # the decode subset IS the full set. See the prefill_metadata note
+        # above for the reasoning. Eliminates two .item() host syncs per
+        # access in the steady-state decode iters — and the steady state is
+        # the entire 1024-iter cookbook generation loop.
+        if self.num_prefills == 0:
+            max_query_len = self.max_query_len
+            max_seq_len = self.max_seq_len
+        else:
+            max_query_len = int(q_seqlens.max().item())
+            max_seq_len = int(kv_seqlens.max().item())
         # Construct & cache decode-phase attention metadata structure
         self._cached_decode_metadata = TreeAttentionMetadata(
             num_actual_tokens=self.num_decode_tokens,
-            max_query_len=int(q_seqlens.max().item()),
+            max_query_len=max_query_len,
             query_start_loc=q_start_loc,
-            max_seq_len=int(kv_seqlens.max().item()),
+            max_seq_len=max_seq_len,
             seq_lens=kv_seqlens,
             block_table=self.block_table[: self.num_decodes],
             slot_mapping=self.slot_mapping[: self.num_decode_tokens],
