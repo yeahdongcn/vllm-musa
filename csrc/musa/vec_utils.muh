@@ -1,6 +1,7 @@
 #pragma once
 
 #include <musa_runtime.h>
+#include <musa_fp8.h>
 
 namespace vllm_musa {
 
@@ -26,6 +27,27 @@ __device__ __forceinline__ Vec16<T> vload16_byp_slc(const T* ptr) {
 template <typename T>
 __device__ __forceinline__ void vstore16(T* ptr, const Vec16<T>& value) {
   *reinterpret_cast<Vec16<T>*>(ptr) = value;
+}
+
+// MUSA-0156/0158/0159 FP8 cast helper.
+//
+// `static_cast<c10::Float8_e4m3fn>(float)` goes through the c10 software
+// bit-manipulation path on MUSA — caps FP8-output kernels at ~35 % roofline.
+// `__musa_cvt_float4_to_fp8x4` (in <musa_fp8.h>) is the hardware-vectorized
+// FP8 cast intrinsic — packs 4 floats into a single 32-bit register
+// (__mt_fp8x4_storage_t = uint32). Two calls give us 8 FP8 = uint64 ready
+// for one coalesced 64-bit store.
+//
+// Sphere-kb provenance: `sphere-kb/docs/compiler/musa-builtins-reference-2026-04-30.md`
+// §1.8 / table row "FP8 (E4M3 / E5M2)".
+__device__ __forceinline__ uint64_t pack8_floats_to_fp8e4m3(const float* v) {
+  float4 lo = make_float4(v[0], v[1], v[2], v[3]);
+  float4 hi = make_float4(v[4], v[5], v[6], v[7]);
+  __mt_fp8x4_storage_t lo4 =
+      __musa_cvt_float4_to_fp8x4(lo, __MT_SATFINITE, __MT_E4M3);
+  __mt_fp8x4_storage_t hi4 =
+      __musa_cvt_float4_to_fp8x4(hi, __MT_SATFINITE, __MT_E4M3);
+  return (static_cast<uint64_t>(hi4) << 32) | static_cast<uint64_t>(lo4);
 }
 
 }  // namespace vllm_musa

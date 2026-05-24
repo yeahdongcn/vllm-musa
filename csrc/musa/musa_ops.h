@@ -64,3 +64,10 @@ void silu_and_mul_per_token_group_fp8_quant(
     torch::Tensor& output_q, torch::Tensor& output_s,
     int64_t group_size, double eps, double fp8_min,
     double fp8_max);
+
+void musa_rms_norm_static_fp8_quant(
+    torch::Tensor& out,
+    torch::Tensor const& input,
+    torch::Tensor const& weight,
+    torch::Tensor const& scale,
+    double epsilon);
