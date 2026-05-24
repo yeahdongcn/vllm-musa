@@ -56,6 +56,12 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _musa_ops), musa_ops) {
                 &silu_and_mul_per_token_group_fp8_quant);
 
   musa_ops.def(
+      "musa_silu_and_mul_per_block_quant(Tensor! out, Tensor input, "
+      "Tensor! scales, int group_size) -> ()");
+  musa_ops.impl("musa_silu_and_mul_per_block_quant", torch::kMUSA,
+                &musa_silu_and_mul_per_block_quant);
+
+  musa_ops.def(
       "musa_rms_norm_static_fp8_quant(Tensor! out, Tensor input, "
       "Tensor weight, Tensor scale, float epsilon) -> ()");
   musa_ops.impl("musa_rms_norm_static_fp8_quant", torch::kMUSA,
