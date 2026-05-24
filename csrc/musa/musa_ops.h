@@ -85,6 +85,14 @@ void musa_rms_norm_static_fp8_quant(
     torch::Tensor const& scale,
     double epsilon);
 
+void musa_merge_attn_states(
+    torch::Tensor& output,
+    std::optional<torch::Tensor> output_lse,
+    torch::Tensor const& prefix_output,
+    torch::Tensor const& prefix_lse,
+    torch::Tensor const& suffix_output,
+    torch::Tensor const& suffix_lse);
+
 void musa_top_k_top_p_sampling_impl(
     at::Tensor probs,
     at::Tensor output,

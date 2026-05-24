@@ -74,6 +74,12 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _musa_ops), musa_ops) {
                 &musa_rms_norm_static_fp8_quant);
 
   musa_ops.def(
+      "musa_merge_attn_states(Tensor! output, Tensor!? output_lse, "
+      "Tensor prefix_output, Tensor prefix_lse, "
+      "Tensor suffix_output, Tensor suffix_lse) -> ()");
+  musa_ops.impl("musa_merge_attn_states", torch::kMUSA, &musa_merge_attn_states);
+
+  musa_ops.def(
       "musa_top_k_top_p_sampling_from_probs(Tensor probs, Tensor! output, "
       "Tensor!? maybe_indices, Tensor? maybe_top_k_arr, float top_k_val, "
       "Tensor? maybe_top_p_arr, float top_p_val, bool deterministic, "
