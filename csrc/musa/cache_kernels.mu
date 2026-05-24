@@ -10,6 +10,46 @@
 
 #include "vec_utils.muh"
 
+// =============================================================================
+// PERF NOTE  (MUSA-0151, characterized 2026-05-24)
+// =============================================================================
+//
+// Kernel: reshape_and_cache_flash_nhd_kernel<T, BLOCK_X=512, TOKENS_PER_BLOCK>
+// Workload: pure bandwidth-bound gather (key, value) -> scatter (kv-cache),
+// 4 × num_tokens × num_heads × head_size × sizeof(T) bytes per call,
+// no compute beyond index arithmetic.
+//
+// Current design layers:
+//   1. LSU cache-bypass loads (`vload16_byp_slc`) — the V3 floor from the
+//      sphere-kb arc (without LSU bypass plain loads are 2-5× slower).
+//   2. Vec16<T> (128-bit) vectorized loads + stores.
+//   3. Shape-adaptive dispatcher: TOKENS_PER_BLOCK ∈ {1,2,4,8} chosen by
+//      vecs_per_token band; env override
+//      VLLM_MUSA_RESHAPE_CACHE_TOKENS_PER_BLOCK.
+//
+// sphere-kb status: no probe exists yet for this kernel (closest is
+// `probes/sgl_kernel_ports_20260428/03-apply_rope_pos_ids/` which fuses
+// RoPE + KV-write but is a separate op). Verify-and-document baseline
+// recorded by the regression bench
+// `benchmarks/op_perf/bench_reshape_and_cache_flash.py`.
+//
+// Deferred optimization candidates (V2+):
+//   - Adaptive BLOCK_X: with current BLOCK_X=512 fixed, vecs_per_token=128
+//     (typical M2.5: num_kv_heads=8, head_size=128) under TOKENS_PER_BLOCK=1
+//     leaves 75 % of threads idle (128/512). Switching to BLOCK_X = next
+//     power-of-2 above vecs_per_token would zero idle and quadruple
+//     concurrent CTAs/SM, potentially +5..15 %. Mirrors the V13 'Layer 4
+//     adaptive BLOCK_X' rule that transferred from RoPE to RMSNorm in the
+//     sphere-kb arc. Easy to land; needs a bench cycle to verify.
+//   - Non-temporal store hint for kv-cache writes (kv-cache is rarely
+//     re-read until attention; NT store may bypass an L2 fill that's
+//     immediately discarded). Needs a probe-style mu-asm 'slc=nt' load
+//     equivalent for store; speculative until measured.
+//   - TME tile-stride load to overlap key + value streams. Gated behind
+//     MUTE_ARCH_TME_MP31_ACTIVATED. Speculative.
+//
+// =============================================================================
+
 namespace vllm_musa {
 
 template <typename T, int BLOCK_X, int TOKENS_PER_BLOCK>
