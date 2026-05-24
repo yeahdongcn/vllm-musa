@@ -34,6 +34,51 @@ typedef __hip_fp8x4_e4m3_fnuz __nv_fp8x4_e4m3;
 #endif
 
 #include "core/registration.h"
+// =============================================================================
+// PERF NOTE  (MUSA-0155, characterized 2026-05-24)
+// =============================================================================
+//
+// Local replacement of upstream vllm/csrc/quantization/activation_kernels.cu
+// (per vllm-musa/setup.py REPLACE_VLLM_FILES).
+//
+// Kernels exported:
+//   - act_and_mul_quant_kernel<scalar_t, ACT_FN, ...> (line 48)
+//     Element-wise SiLU/GELU + multiply + quant fused.
+//   - silu_mul_fp8_quant_deep_gemm_kernel<BLOCK_COUNT, SMEM_SIZE_BYTES_Y,
+//     fp8_type, ...> (line 287)
+//     SiLU + mul + FP8 quant for deep-gemm input prep (M2.5 MoE path
+//     enabled via VLLM_MUSA_SPHERE_SILU_FP8=1).
+//
+// Layer state vs sphere-kb idiom catalog:
+//   vload16_byp_slc (V3 floor):     NO
+//   Vec16<T> 128-bit loads/stores:  NO
+//   __musa_memcpy_g2s async G2S:    NO
+//   __launch_bounds__:              NO
+//   Warp-shuffle reduction (shfl_): YES (4 occurrences)
+//
+// Decode-profile share: 0.04 % of prefill (silu_mul_fp8_quant kernel,
+// 124 calls × 55 us avg) — fires once per MoE layer per token in expert
+// path. Element-wise compute is small; load cost dominates.
+//
+// sphere-kb status: no direct probe for silu_mul. Tangential references:
+//   - probes/sgl_kernel_ports_20260428/01-fused_add_rmsnorm/ (V1..V14
+//     layered methodology that applies to element-wise + reduction
+//     bandwidth-bound kernels)
+//   - mate/csrc/gemm_fp8_groupwise.mu for FP8 quant idioms.
+//
+// Deferred V1 → V3 candidate ladder:
+//   V1: Vec16<T> 128-bit loads for x and gate inputs (current code uses
+//       scalar reads). Element-wise math fuses 7 of 8 ops per
+//       16B-vector. Estimated +20..30 % on the bandwidth-bound path.
+//   V2: V1 + vload16_byp_slc LSU cache-bypass for x/gate reads.
+//       Estimated +5..15 %.
+//   V3: V2 + __musa_memcpy_g2s for the per-token scale broadcast (only
+//       in the deep_gemm variant). Estimated +5..10 %.
+//
+// Regression bench: benchmarks/op_perf/bench_silu_mul_fp8_quant.py
+//
+// =============================================================================
+
 namespace vllm {
 
 template <typename T>
