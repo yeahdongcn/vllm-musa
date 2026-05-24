@@ -10,6 +10,53 @@
 
 #include "vec_utils.muh"
 
+// =============================================================================
+// PERF NOTE  (MUSA-0150, verified 2026-05-24)
+// =============================================================================
+//
+// This kernel is the V14 design from the sphere-kb silicon-validated
+// optimization arc for fused_add_rmsnorm on MTT-S5000 (PH1, mp_31). See:
+//
+//   sphere-kb/probes/sgl_kernel_ports_20260428/01-fused_add_rmsnorm/
+//     RESULTS.md            -- iteration history V1..V14, benchmark CSV
+//     sphere_rmsnorm.mu     -- 813-line variant catalog (V1..V11 diagnostic)
+//     v14_release/          -- packaged V14 reference (functionally identical
+//                              to this kernel; same single-pass register-
+//                              resident design, same __musa_memcpy_g2s async
+//                              weight prefetch, same vload16_byp_slc LSU-
+//                              bypass loads, same adaptive block_x heuristic
+//                              frozen 2026-04-29)
+//
+// Verified achievement (silicon, worker33017, 1000 iters/trial, 5-trial median):
+//   - geomean +31 % over sgl-kernel `LayerNormGlobalKernelVlen<T,float,1024,1,8>`
+//   - max +93 % at M=256, N=4096
+//   - effective bandwidth ~1470 GB/s at large shapes -- at S5000's practical
+//     GDDR6 roofline (sphere-kb claim s5000.practical_gddr6_bandwidth_updated:
+//     ~1200 GB/s read+write, ~1400 GB/s read-only)
+//   - no kernel-level headroom remaining at large shapes
+//
+// Small-M regime (e.g. cookbook 4k/1k BS=1 decode where M = 1 verify token
+// or M = 6 verify chain): this kernel is launch-overhead + SM-occupancy
+// bound, NOT bandwidth-bound. One block of 1024 threads (≈2.8 % of 36-MP
+// utilization) cannot saturate GDDR6. The lever there is fusion with
+// neighboring ops -- tracked in MUSA-0156 (layernorm_quant_kernels.cu),
+// MUSA-0157 (fused_qknorm_rope_kernel.cu), MUSA-0158
+// (fused_silu_mul_block_quant.cu). The multi-row-per-block variant (V6) was
+// tested in the probe and consistently 5-30 % WORSE due to extra
+// per-row reduce overhead.
+//
+// Deferred next-step optimization candidates (from the probe's "Open
+// questions" section, not yet measured):
+//   - TME tile-stride load to overlap x/r streams (gated behind
+//     MUTE_ARCH_TME_MP31_ACTIVATED, est. +5..10 %)
+//   - Pipeline pass-1 chunks with async copy on x/r as well as w (only
+//     profitable at CHUNK >= 2, e.g. N=12288)
+//
+// Reference regression benchmark:
+//   benchmarks/op_perf/bench_fused_add_rmsnorm.py
+//
+// =============================================================================
+
 extern "C" {
 extern __device__ void __musa_memcpy_g2s(
     __attribute__((address_space(3))) void* dst,
