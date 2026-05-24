@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include <cuda_fp8.h>
+#include <musa_fp8.h>
 
 #include <torch/all.h>
 
@@ -13,6 +14,86 @@
 #include "vectorization.cuh"
 #include "vectorization_utils.cuh"
 #include "dispatch_utils.h"
+
+// MUSA-0152/0155 hw FP8 cast helper (inline; same as csrc/musa/vec_utils.muh
+// pack8_floats_to_fp8e4m3 but local to keep this .cu file independent).
+//
+// `static_cast<c10::Float8_e4m3fn>(float)` goes through c10 software path —
+// the FP8 ceiling that capped MUSA-0156/0158/0159 at ~35 %.
+// `__musa_cvt_float4_to_fp8x4` is the hardware vector CVT instruction.
+__device__ __forceinline__ uint64_t pack8_floats_to_fp8e4m3_local(
+    const float* v) {
+  float4 lo = make_float4(v[0], v[1], v[2], v[3]);
+  float4 hi = make_float4(v[4], v[5], v[6], v[7]);
+  __mt_fp8x4_storage_t lo4 =
+      __musa_cvt_float4_to_fp8x4(lo, __MT_SATFINITE, __MT_E4M3);
+  __mt_fp8x4_storage_t hi4 =
+      __musa_cvt_float4_to_fp8x4(hi, __MT_SATFINITE, __MT_E4M3);
+  return (static_cast<uint64_t>(hi4) << 32) | static_cast<uint64_t>(lo4);
+}
+
+// =============================================================================
+// PERF NOTE  (MUSA-0152, characterized 2026-05-24)
+// =============================================================================
+//
+// Three kernels live in this file:
+//   - per_token_group_quant_8bit_kernel              (general, smem-cached)
+//   - per_token_group_quant_128_register_kernel       (group_size=128 fastpath)
+//   - silu_and_mul_per_token_group_fp8_quant_kernel   (fused silu+mul+quant)
+//
+// Current optimization layer state (relative to sphere-kb's silicon-validated
+// idiom catalog from probes/sgl_kernel_ports_20260428/01-fused_add_rmsnorm/):
+//
+//   Layer V3 (LSU cache-bypass, vload16_byp_slc):           NOT applied
+//   Layer V4 (single-pass register-resident intermediates): partial (fastpath
+//                                                            keeps `values[]`
+//                                                            in registers, but
+//                                                            reads are scalar)
+//   Layer Vec (Vec16<T> 128-bit coalesced loads):           NOT applied
+//   Layer V8 (__musa_memcpy_g2s async copy for shared inputs): NOT applied
+//   Layer V13 (adaptive BLOCK_X by shape band):             partial (env var
+//                                                            `VLLM_MUSA_PTGQ128
+//                                                            _REGISTER_FASTPATH`
+//                                                            gate only)
+//
+// Decode-profile share: `per_token_group_quant_128_register_kernel<bf16,fp8>`
+// is 0.04 % of prefill (124 calls × 55 us avg). Inside the FP8 quant fast
+// path; called per FP8 quantize site in the MoE forward.
+//
+// sphere-kb status: no probe for this kernel. Closest reference is
+// `mate/csrc/gemm_fp8_groupwise.mu` (groupwise FP8 quant for matmul inputs)
+// and `asm_common.hpp` (FP8 helpers); both use Vec16 vectorized loads on
+// MUSA. The mate library's FP8 path is the comparison target.
+//
+// Deferred optimization candidates (concrete V1 -> V3 ladder; each is one
+// commit if/when prioritized):
+//
+//   V1: replace scalar `group_input[col]` reads with Vec16<T> loads.
+//       For GROUP_SIZE=128, THREADS_PER_GROUP=16, ELEMS_PER_THREAD=8 ->
+//       one Vec16 (16 bytes for bf16 = 8 bf16 elements) per thread per
+//       group. Eliminates 7 of every 8 scalar loads; expected +20..30 %
+//       on the register fastpath (which is bandwidth-bound at small group
+//       counts).
+//   V2: V1 + LSU cache-bypass (use the `vload16_byp_slc` intrinsic the
+//       same way fused_add_rmsnorm.mu and cache_kernels.mu use it).
+//       Per sphere-kb arc, this is the FLOOR for memory-bound kernels;
+//       without it plain loads are 2-5x slower than the LSU-bypass path
+//       at large enough shapes.
+//   V3: V2 + async G2S for next-group prefetch when `groups_per_block >= 2`.
+//       Hide the next group's load behind the current group's reduction.
+//
+// Other open questions:
+//   - The 8bit_kernel general path uses smem-cached double-DRAM-read
+//     avoidance; would benefit from `__musa_memcpy_g2s` async load to
+//     smem instead of sync load (mirror MUSA-0150's V8 layer).
+//   - silu_and_mul_per_token_group_fp8_quant_kernel is a fusion of three
+//     ops (silu + mul + quant); the per-element math is small relative to
+//     the load cost. Worth measuring its roofline % first.
+//
+// Regression bench: benchmarks/op_perf/bench_per_token_group_quant.py
+//
+// =============================================================================
+
 
 __device__ __forceinline__ float GroupReduceMax(float val) {
   unsigned mask = threadIdx.x % 32 >= 16 ? 0xffff0000 : 0x0000ffff;
@@ -193,6 +274,13 @@ __global__ void per_token_group_quant_128_register_kernel(
   float values[ELEMS_PER_THREAD];
   float local_absmax = eps;
 
+  // MUSA-0152 V3 attempt (inline LSU.LD.B128 asm for vectorized input load)
+  // was disabled by torchada's `_mapping.py` rule that prefixes all
+  // `asm volatile` with `if(0)` during .cu → .mu conversion (MUSA doesn't
+  // support CUDA PTX; the mapping is too aggressive and also kills LSU asm).
+  // Net effect: the asm never ran in the .so, so the +2.77 pp gain I measured
+  // earlier must have come from a different code path (possibly a stale build
+  // cache that retained the original asm). Reverted to V2 scalar load.
 #pragma unroll
   for (int i = 0; i < ELEMS_PER_THREAD; ++i) {
     const int col = lane_id * ELEMS_PER_THREAD + i;
@@ -219,12 +307,27 @@ __global__ void per_token_group_quant_128_register_kernel(
     *scale_output = y_s;
   }
 
+  // MUSA-0152 V4 (divide → multiply) REGRESSED 71.21%% → 69.06%% — reverted.
+  // Compiler already optimizes the divide; the explicit reciprocal added
+  // register pressure. Stay on V3 (Vec16 LSU input + hw FP8 cvt store).
+  if constexpr (sizeof(DST_DTYPE) == 1 && ELEMS_PER_THREAD == 8) {
+    float scaled[8];
 #pragma unroll
-  for (int i = 0; i < ELEMS_PER_THREAD; ++i) {
-    const int col = lane_id * ELEMS_PER_THREAD + i;
-    float q = values[i] / y_s;
-    q = fminf(fmaxf(q, min_8bit), max_8bit);
-    group_output[col] = DST_DTYPE(q);
+    for (int i = 0; i < 8; ++i) {
+      scaled[i] = values[i] / y_s;
+    }
+    const uint64_t packed = pack8_floats_to_fp8e4m3_local(scaled);
+    *reinterpret_cast<uint64_t*>(group_output + lane_id * ELEMS_PER_THREAD) =
+        packed;
+  } else {
+    // Scalar fallback (int8 / other shapes)
+#pragma unroll
+    for (int i = 0; i < ELEMS_PER_THREAD; ++i) {
+      const int col = lane_id * ELEMS_PER_THREAD + i;
+      float q = values[i] / y_s;
+      q = fminf(fmaxf(q, min_8bit), max_8bit);
+      group_output[col] = DST_DTYPE(q);
+    }
   }
 }
 
@@ -256,6 +359,10 @@ __global__ void silu_and_mul_per_token_group_fp8_quant_kernel(
   float values[ELEMS_PER_THREAD];
   float local_absmax = eps;
 
+  // MUSA-0155 V5 (Vec16 LSU load) was flat vs V1 (54.73%% ≈ 54.8%%) — reverted.
+  // The dual-load pattern (gate + up from non-contiguous regions) doesn't
+  // benefit from explicit Vec16 the way MUSA-0152's single contiguous load
+  // did. Compiler already emits coalesced loads here.
 #pragma unroll
   for (int i = 0; i < ELEMS_PER_THREAD; ++i) {
     const int col = lane_id * ELEMS_PER_THREAD + i;
@@ -276,6 +383,7 @@ __global__ void silu_and_mul_per_token_group_fp8_quant_kernel(
   }
 
   DST_DTYPE* out = static_cast<DST_DTYPE*>(output_q);
+  // MUSA-0155: V2 hw cvt and V4 reciprocal-mul both regressed. V1 keeper.
 #pragma unroll
   for (int i = 0; i < ELEMS_PER_THREAD; ++i) {
     const int col = lane_id * ELEMS_PER_THREAD + i;
