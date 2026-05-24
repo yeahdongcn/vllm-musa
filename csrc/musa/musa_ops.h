@@ -93,6 +93,13 @@ void musa_merge_attn_states(
     torch::Tensor const& suffix_output,
     torch::Tensor const& suffix_lse);
 
+void musa_topk_softmax(
+    torch::Tensor& topk_weights,
+    torch::Tensor& topk_indices,
+    torch::Tensor& token_expert_indices,
+    torch::Tensor const& gating_output,
+    bool renormalize);
+
 void musa_top_k_top_p_sampling_impl(
     at::Tensor probs,
     at::Tensor output,

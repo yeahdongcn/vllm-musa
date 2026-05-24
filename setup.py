@@ -179,6 +179,7 @@ VLLM_MUSA_CSRC_SOURCES = [
     "csrc/musa/quantization/silu_and_mul_per_block_quant.mu",
     "csrc/musa/quantization/rms_norm_static_fp8_quant.mu",
     "csrc/musa/attention/merge_attn_states.mu",
+    "csrc/musa/moe/topk_softmax.mu",
     "csrc/musa/flashinfer/top_k_top_p_sampling.mu",
     "csrc/musa/fused_qk_norm_rope.mu",
 ]
