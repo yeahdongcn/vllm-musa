@@ -60,6 +60,15 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _musa_ops), musa_ops) {
       "Tensor weight, Tensor scale, float epsilon) -> ()");
   musa_ops.impl("musa_rms_norm_static_fp8_quant", torch::kMUSA,
                 &musa_rms_norm_static_fp8_quant);
+
+  musa_ops.def(
+      "musa_fused_qk_norm_rope(Tensor! qkv, int num_heads_q, "
+      "int num_heads_k, int num_heads_v, int head_dim, float eps, "
+      "Tensor q_weight, Tensor k_weight, Tensor cos_sin_cache, "
+      "bool is_neox, Tensor position_ids, "
+      "int forced_token_heads_per_warp=-1) -> ()");
+  musa_ops.impl("musa_fused_qk_norm_rope", torch::kMUSA,
+                &musa_fused_qk_norm_rope);
 #endif
 }
 

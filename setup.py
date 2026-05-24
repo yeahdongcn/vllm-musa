@@ -176,6 +176,7 @@ VLLM_MUSA_CSRC_SOURCES = [
     # torch/headeronly/util/Exception.h, which is not supported by the current musa.
     "csrc/musa/quantization/per_token_group_quant.cu",
     "csrc/musa/quantization/rms_norm_static_fp8_quant.mu",
+    "csrc/musa/fused_qk_norm_rope.mu",
 ]
 
 VLLM_MOE_CSRC_SOURCES = [
@@ -260,6 +261,21 @@ CSRC_TEXT_PATCHES = {
             "cudaFuncSetAttribute(FUNC, cudaFuncAttributeMaxDynamicSharedMemorySize, VAL)": "musaFuncSetAttribute(FUNC, musaFuncAttributeMaxDynamicSharedMemorySize, VAL)"
         }
     ],
+    # MUSA-0157 investigation result (DO NOT re-enable without a MUSA-native rewrite):
+    # The upstream fused_qk_norm_rope kernel silently no-ops for bf16 on MUSA
+    # (verified via correctness_fused_qk_norm_rope_trivial.py: scale=10 input →
+    # scale=10 output, RMSNorm never runs). Attempted patch was:
+    #   "#if (!defined(__CUDA_ARCH__) || __CUDA_ARCH__ < 800) && !defined(USE_ROCM)"
+    #     → "#if ... && !defined(USE_ROCM) && !defined(__MUSACC__)"
+    # to suppress the bf16 early-return on MUSA. RESULT: build fails at
+    # musa_bf16.hpp:1670 "couldn't allocate output register for constraint 'h'"
+    # — this is the same mcc bf16 inline-asm blocker documented in MUSA-0105.
+    # The guard was upstream's intentional skip for this case.
+    #
+    # Real fix: add a MUSA-native fused_qk_norm_rope kernel that avoids
+    # musa_bf16.hpp's broken inline asm path (the pattern MUSA-0150
+    # csrc/musa/fused_add_rmsnorm.mu uses: manual bf16→fp32 via static_cast).
+    # Filed as MUSA-0157 follow-up; not in this commit.
     str(_VLLM_REPO.source_dir / "csrc/quantization/w8a8/fp8/common.cuh"): [
         {'#include "../../utils.cuh"': '#include "quantization/utils.cuh"'},
     ],
