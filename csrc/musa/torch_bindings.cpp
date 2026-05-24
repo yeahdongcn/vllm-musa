@@ -44,6 +44,11 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _musa_ops), musa_ops) {
            &per_token_group_quant_fp8);
 
   musa_ops.def(
+      "musa_rotary_embedding(Tensor positions, Tensor! query, Tensor! key, "
+      "int head_size, Tensor cos_sin_cache, bool is_neox) -> ()");
+  musa_ops.impl("musa_rotary_embedding", torch::kMUSA, &musa_rotary_embedding);
+
+  musa_ops.def(
       "silu_and_mul_per_token_group_fp8_quant(Tensor input, Tensor! output_q, "
       "Tensor! output_s, int group_size, float eps, float fp8_min, "
       "float fp8_max) -> ()");

@@ -169,6 +169,7 @@ VLLM_MUSA_CSRC_SOURCES = [
     "csrc/musa/gemv.mu",
     "csrc/musa/fused_add_rmsnorm.mu",
     "csrc/musa/cache_kernels.mu",
+    "csrc/musa/pos_encoding.mu",
     # XXX (MUSA): The version used here is vllm 0.18.0, located at csrc/quantization/w8a8/fp8.
     # While in version 0.20.0, the path has changed to csrc/libtorch_stable/quantization/w8a8/fp8,
     # and depends on two header file from PyTorch 2.11's torch/headeronly/core/ScalarType.h and

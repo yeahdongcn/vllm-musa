@@ -36,6 +36,14 @@ void musa_fused_add_rms_norm(
     torch::Tensor &weight,
     double eps);
 
+void musa_rotary_embedding(
+    torch::Tensor &positions,
+    torch::Tensor &query,
+    torch::Tensor &key,
+    int64_t head_size,
+    torch::Tensor &cos_sin_cache,
+    bool is_neox);
+
 void musa_reshape_and_cache_flash_nhd(
     torch::Tensor &key,
     torch::Tensor &value,
