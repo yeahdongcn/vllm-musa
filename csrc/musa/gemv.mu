@@ -15,6 +15,96 @@
 
 using namespace musa::dnn;
 
+// =============================================================================
+// PERF NOTE  (MUSA-0153, characterized 2026-05-24)
+// =============================================================================
+//
+// `musa_gemv_kernel<AType, BType, CType, ScoreType, ScaleType, BLOCK_N, BLOCK_K,
+//                   iobit, mul_routed_weight, is_swigelu, is_w4a16,
+//                   is_per_group_scale, is_fp8, scale_block, use_rms_norm>`
+//
+// HOTNESS: this kernel is the **single dominant prefill kernel** in the
+// cookbook 4k/1k M2.5 trace. The decode-profile attribution (from the
+// 2026-05-23 capture in memory project_musa_0126_cast_loop_results.md):
+//
+//   void musa_gemv_kernel<__mt_bfloat16, __mt_fp8_e4m3, __mt_bfloat16,
+//     float, float, 4, 32, 128, false, true, false, false, true, 128, false>
+//      → 65.90 % of prefill kernel time per rank (median)
+//      → 29.55 % at a different shape (a sibling instantiation)
+//      → combined 95.75 % of prefill kernel time.
+//
+// Any optimization win here translates almost 1:1 to prefill TTFT.
+//
+// Current optimization layer state vs sphere-kb's silicon-validated idiom
+// catalog (probes/sgl_kernel_ports_20260428/01-fused_add_rmsnorm/) and
+// anvil's GEMM-asm path (probes/anvil_gemm_m64n64_fp16_kernelasm_20260422):
+//
+//   Vector types (v8f32_t, v16f32_t, VecType<...,128>::Ttype): YES (line 281+)
+//   __launch_bounds__:                                          NO
+//   vload16_byp_slc (LSU cache-bypass load):                    NO
+//   __musa_memcpy_g2s (async G2S for weight prefetch):          NO
+//   TCE.SQMMA tile atoms for the inner matmul:                  NO
+//   Adaptive BLOCK_N / BLOCK_K dispatch by shape band:          partial
+//                                                                (BLOCK_N=4,
+//                                                                 BLOCK_K=32
+//                                                                 are template
+//                                                                 args; the
+//                                                                 host
+//                                                                 dispatcher
+//                                                                 picks
+//                                                                 them, see
+//                                                                 musa_fused_gemv)
+//
+// Note: `using namespace musa::dnn` at the top of the file refers to MUSA's
+// dnn library *for support utilities* (Workspace, ParamType, etc.), NOT
+// for calling mudnn matmul kernels — this kernel implements its own
+// matmul body. The dominant profile kernel IS this file.
+//
+// sphere-kb status: no direct probe for this kernel. Anvil produced
+// scheduler-driven `gemm m64n64 fp16` kernel-asm on silicon
+// (probes/anvil_gemm_m64n64_fp16_{kernelasm,scheduled}_20260422/), but
+// that's an enablement probe for the sphere-compile codegen pipeline,
+// not a finished fused-MoE-GEMV reference. mate's `gemm_fp8_groupwise.mu`
+// + `moe_gemm_asm.mu` are the upper-bound references for FP8 matmul
+// performance on MUSA — they use TCE.SQMMA tile atoms directly.
+//
+// Deferred optimization ladder (concrete V1 -> V3; each is its own ticket
+// when prioritized):
+//
+//   V1: LSU cache-bypass loads for A/B (`vload16_byp_slc`-equivalent for
+//       the 128-bit vector types currently used). Pure load-side change,
+//       no algorithmic refactor. Estimated +5..15 % on the prefill share
+//       (which is bandwidth-co-bound at large K). Pattern mirrors
+//       fused_add_rmsnorm.mu's V3 floor.
+//
+//   V2: `__musa_memcpy_g2s` async copy for the weight tile when the
+//       scale/quantization path is on (the FP8 weight is read once per
+//       `scale_block` group; staging into smem with async G2S would
+//       overlap with the in-flight SQMMA accumulators). Estimated
+//       +5..10 % on the FP8 path specifically. Pattern mirrors
+//       fused_add_rmsnorm.mu's V8 layer.
+//
+//   V3: TCE.SQMMA tile-atom refactor for the inner matmul. This is the
+//       BIG lever: the current kernel uses v8f32_t/v16f32_t for math
+//       accumulation, which is NOT the peak path on PH1. Mate's
+//       gemm_fp8_groupwise.mu shows the SQMMA path can reach near peak
+//       FP8 TFLOPS. Migrating this kernel's inner loop to SQMMA atoms
+//       is structural multi-cycle work but estimated +30..70 % on the
+//       FP8 prefill path. Plan: stand up a microbench harness, port the
+//       inner kt-loop one shape at a time (M=4k N=H K=H first), keep
+//       the existing v8f32 path behind a fallback env var.
+//
+//   V4 (open question): persistent kernel that holds the FP8 weight
+//       across multiple tokens to amortize the per-token weight reload.
+//       Useful when num_tokens × K bytes exceeds L2.
+//
+// Regression bench: benchmarks/op_perf/bench_fused_gemv.py
+// (covers the cookbook prefill shape + decode-batch shapes; reports
+// achieved-vs-FP8-peak ratio when OP_PERF_PEAK_FP8_TFLOPS is set).
+//
+// =============================================================================
+
+
 #if defined(__MUSA_ARCH__) && __MUSA_ARCH__ == 310
 #define ThreadNumPerWarp 32
 #else
