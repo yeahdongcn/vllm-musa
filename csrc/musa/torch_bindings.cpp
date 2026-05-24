@@ -74,6 +74,14 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _musa_ops), musa_ops) {
                 &musa_rms_norm_static_fp8_quant);
 
   musa_ops.def(
+      "musa_top_k_top_p_sampling_from_probs(Tensor probs, Tensor! output, "
+      "Tensor!? maybe_indices, Tensor? maybe_top_k_arr, float top_k_val, "
+      "Tensor? maybe_top_p_arr, float top_p_val, bool deterministic, "
+      "Generator? gen) -> ()");
+  musa_ops.impl("musa_top_k_top_p_sampling_from_probs", torch::kMUSA,
+                &musa_top_k_top_p_sampling_impl);
+
+  musa_ops.def(
       "musa_fused_qk_norm_rope(Tensor! qkv, int num_heads_q, "
       "int num_heads_k, int num_heads_v, int head_dim, float eps, "
       "Tensor q_weight, Tensor k_weight, Tensor cos_sin_cache, "

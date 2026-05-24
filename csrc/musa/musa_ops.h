@@ -85,6 +85,17 @@ void musa_rms_norm_static_fp8_quant(
     torch::Tensor const& scale,
     double epsilon);
 
+void musa_top_k_top_p_sampling_impl(
+    at::Tensor probs,
+    at::Tensor output,
+    std::optional<at::Tensor> maybe_indices,
+    std::optional<at::Tensor> maybe_top_k_arr,
+    double top_k_val,
+    std::optional<at::Tensor> maybe_top_p_arr,
+    double top_p_val,
+    bool deterministic,
+    std::optional<at::Generator> gen_);
+
 void musa_fused_qk_norm_rope(
     torch::Tensor& qkv,
     int64_t num_heads_q,
