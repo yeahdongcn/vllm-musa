@@ -175,6 +175,7 @@ VLLM_MUSA_CSRC_SOURCES = [
     # and depends on two header file from PyTorch 2.11's torch/headeronly/core/ScalarType.h and
     # torch/headeronly/util/Exception.h, which is not supported by the current musa.
     "csrc/musa/quantization/per_token_group_quant.cu",
+    "csrc/musa/quantization/rms_norm_dynamic_per_token_quant.mu",
     "csrc/musa/quantization/silu_and_mul_per_block_quant.mu",
     "csrc/musa/quantization/rms_norm_static_fp8_quant.mu",
     "csrc/musa/fused_qk_norm_rope.mu",
