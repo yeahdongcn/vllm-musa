@@ -237,6 +237,15 @@ def _register_ops() -> None:
     """Register OOT custom ops (activation, layernorm, fused_moe, etc.)."""
     import vllm_musa.model_executor  # noqa: F401
 
+    # MUSA-0164 (v2): replace upstream `_C::<op>` impls at the dispatcher
+    # layer via torchada.replace_op_impl so the upstream op name stays in
+    # the FX graph (Inductor fusion patterns still match) while the runtime
+    # call routes to our MUSA-native op-perf kernels. Default ON; opt out
+    # with VLLM_MUSA_OP_PERF_OVERRIDES=0. Supersedes the prior
+    # `_custom_ops_override.py` Python-wrapper monkey-patch.
+    from vllm_musa._dispatcher_override import apply_overrides as _musa_apply_overrides
+    _musa_apply_overrides()
+
 
 def _register_modules() -> None:
     """Register distributed connectors, utils, and v1 attention backends."""
