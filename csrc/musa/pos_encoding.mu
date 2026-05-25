@@ -17,6 +17,7 @@
 #include <torch/all.h>
 #include <torch_musa/csrc/aten/musa/MUSAContext.h>
 #include <torch_musa/csrc/core/MUSAGuard.h>
+#include <algorithm>
 #include <cstdlib>
 
 extern "C" {
@@ -326,14 +327,25 @@ void musa_rotary_embedding_impl(
   // V2..V4 = is_neox-aware via INTERLEAVE template.
   // V5 (default ship) = adaptive BLOCK_X dispatch + is_neox-aware + env override.
   // Refined heuristic from per-shape sweep (S5000 64 MPs):
+  //   max_heads <= 8 → BLOCK=64 (narrow-H: M2.5 per-rank Q=6/K=1 only fills ~48 thread-
+  //                   slots out of 512 with the legacy BLOCK=512 path; tightening to 64
+  //                   eliminates the 90% idle and is the dominant BS=16/64 lever)
   //   T >= 512 → BLOCK=128 (≥8 CTAs/MP, max occupancy)
   //   T ∈ [256, 512) → BLOCK=256 (4 CTAs/MP — 128 too aggressive, 512 too fat)
   //   T < 256 AND num_heads >= 64 → BLOCK=512 (per-token work big enough to fatten)
   //   T < 128 → BLOCK=512 (launch-bound, fatten single CTA)
   //   T == 128 AND num_heads < 64 → BLOCK=256 (sweet spot)
+  //
+  // The per-CTA work in pairs is (num_heads + num_kv_heads) * (rot_dim / 2). For M2.5
+  // per-rank (Q=6, K=1, rot_dim=128 → embed_dim=64): 7 * 64 = 448 pairs = 56 vec-slots
+  // with VLEN=8. BLOCK_X=64 (2 warps) is the tightest power-of-two ≥ that work without
+  // splitting a warp. This is the M2.5 hot path.
+  const int max_heads = std::max(num_heads, num_kv_heads);
   int block_x_v5;
   if (const char* e = std::getenv("SPHERE_ROPE_BLOCK_X")) {
     block_x_v5 = std::atoi(e);
+  } else if (max_heads <= 8) {
+    block_x_v5 = 64;  // narrow-H (M2.5 hot path)
   } else if (num_tokens >= 512) {
     block_x_v5 = 128;
   } else if (num_tokens >= 256) {
@@ -372,7 +384,8 @@ void musa_rotary_embedding_impl(
     case 3: LAUNCH_KERNEL(512); break;  // BLOCK_X=512
     case 4: LAUNCH_KERNEL(128); break;  // BLOCK_X=128
     case 5: {
-      if (block_x_v5 == 128) { LAUNCH_KERNEL(128) }
+      if (block_x_v5 <= 64) { LAUNCH_KERNEL(64) }
+      else if (block_x_v5 == 128) { LAUNCH_KERNEL(128) }
       else if (block_x_v5 == 256) { LAUNCH_KERNEL(256) }
       else { LAUNCH_KERNEL(512) }
       break;
