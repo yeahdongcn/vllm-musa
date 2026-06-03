@@ -92,7 +92,7 @@ v0.22.0 (`up`) or not (`PRIV`). `L` = file lines.
 | Module (`vllm.*`) | kind | norm | tgt | L | Purpose |
 |---|---|---|---|---|---|
 | `model_executor.layers.attention.attention` | src | | up | 14 | attention compile compat |
-| `model_executor.layers.sparse_attn_indexer` | src | norm | up | 998 | opt-in MUSA sparse-indexer correctness fallback (+ side-effect helpers) |
+| `model_executor.layers.sparse_attn_indexer` | src | norm | up | 998 | opt-in MUSA sparse-indexer correctness fallback (helpers injected as source text, NOT monkey-patches — MUSA-0302 audit) |
 | `v1.attention.backends.mla.flashmla` | src | | up | 15 | reorder-batch threshold 128→1 |
 | `v1.attention.backends.mla.sparse_swa` | src | | up | 89 | DeepSeek-V4 sparse SWA metadata Triton |
 | `v1.attention.ops.flashmla` | src | | up | 14 | MUSA capability family |
@@ -112,7 +112,7 @@ v0.22.0 (`up`) or not (`PRIV`). `L` = file lines.
 |---|---|---|---|---|---|
 | `v1.worker.gpu_worker` | src | | up | 30 | accept `musa` device type |
 | `v1.worker.gpu_input_batch` | src | | up | 78 | MUSA-0203 (#34880) input-batch hunks |
-| `v1.worker.gpu_model_runner` | src | | up | 165 | DeepSeek/MTP runner source patches (+ side-effect) |
+| `v1.worker.gpu_model_runner` | src | | up | 165 | DeepSeek/MTP runner source patches (former monkey-patch "no longer reachable" per docstring — pure source-transform, MUSA-0302 audit) |
 | `v1.worker.gpu.block_table` | src | norm | up | 45 | v0.22 block-table Triton compat |
 | `v1.worker.gpu.sample.penalties` | src | | up | 10 | v0.22 worker penalties Triton compat |
 
@@ -150,7 +150,7 @@ v0.22.0 (`up`) or not (`PRIV`). `L` = file lines.
 | `model_executor.layers.deepseek_v4_attention` | src | norm | **PRIV** | 839 | DSv4 attention → MUSA sparse FlashMLA |
 | `model_executor.models.deepseek_v4` | src | | **PRIV** | 378 | DSv4 model CUDA-only gates |
 | `model_executor.models.deepseek_v4_mtp` | src | | **PRIV** | 71 | DSv4 MTP compat |
-| `v1.attention.ops.deepseek_v4_ops.cache_utils` | src | | **PRIV** | 444 | DSv4 cache-util kernels (+ side-effect) |
+| `v1.attention.ops.deepseek_v4_ops.cache_utils` | src | | **PRIV** | 444 | DSv4 cache-util kernels (helpers injected as source text, NOT monkey-patches — MUSA-0302 audit) |
 | `v1.attention.ops.deepseek_v4_ops.fused_compress_quant_cache` | src | | **PRIV** | 23 | DSv4 compressor Triton compat |
 | `v1.attention.ops.deepseek_v4_ops.fused_indexer_q` | src | | **PRIV** | 282 | DSv4 sparse-indexer Q quant gate |
 | `v1.attention.ops.deepseek_v4_ops.fused_inv_rope_fp8_quant` | src | norm | **PRIV** | 294 | DSv4 inverse-RoPE FP8 quant fallback |
@@ -252,11 +252,20 @@ a `_musa_*` sentinel attribute and uses wrap-and-replace, never disk mutation �
    bumps (the anchor moves → test passes or the patch silently no-ops). →
    MUSA-0304 (convert to behavior tests), MUSA-0307 (cross-version validation).
 
-7. **Two side-effect patches remain** (`distributed.parallel_state`,
-   `v1.spec_decode.eagle`) plus mixed side-effect code inside three `src`
-   files (`sparse_attn_indexer`, `deepseek_v4_ops.cache_utils`,
-   `gpu_model_runner`). Their behavior is invisible to any patch report because
-   `PATCHES` is empty / the effect is a monkey-patch. → MUSA-0302.
+7. **Exactly two genuine import-side-effect patches existed**
+   (`distributed.parallel_state`, `v1.spec_decode.eagle`) — `PATCHES = []`, the
+   effect was a monkey-patch fired at module-load time, invisible to any report.
+   **RESOLVED by MUSA-0302** (`65181ba2d`): both converted to a module-level
+   idempotent `apply()` driven by the explicit `patches.apply_object_patches()`
+   phase; `patch_report()` now flags them (`object_patch=True`). The earlier
+   claim of "mixed side-effect code inside three `src` files"
+   (`sparse_attn_indexer`, `deepseek_v4_ops.cache_utils`, `gpu_model_runner`)
+   was **disproven by code audit** — those have zero monkey-patch installs
+   (their `_musa_*` helpers are source-transform *text*; `gpu_model_runner`'s
+   former monkey-patch is "no longer reachable"). They are pure source-transforms.
+   Separately, `RELOAD_AFTER_PATCH` is defined in 7 DeepSeek-V4 patch files but
+   **consumed nowhere** (dead metadata; the in-memory-vs-disk reload hazard it
+   was meant to address is MUSA-0303's concern).
 
 8. **`setup.py` patches a Python file at build time** (`vllm/_custom_ops.py` in
    `CSRC_TEXT_PATCHES`) — a fourth wrinkle that blurs mechanism 1 vs 3 and
@@ -275,7 +284,7 @@ a `_musa_*` sentinel attribute and uses wrap-and-replace, never disk mutation �
 | Bucket | Count | Mechanism | Disposition (target ticket) |
 |---|---|---|---|
 | Object monkey-patch (good pattern) | 6 | 4 | keep; use as template (MUSA-0302/0304) |
-| Side-effect import patch | 2 (+3 mixed) | 2 | → explicit object phase (MUSA-0302) |
+| Side-effect import patch | 2 | 2 | **DONE** — explicit `apply_object_patches()` phase (MUSA-0302 `65181ba2d`); "3 mixed" disproven (pure source-transforms) |
 | Source transform, upstream target | 41 | 1 | → in-memory transform (MUSA-0303); migrate low-risk to object/registry (MUSA-0304); spec-decode subset → compat modules (MUSA-0305) |
 | Source transform, private/absent target | 10 | 1 | **audit first** (§5.4); confirm runtime provider or retire |
 | Native file override | 4 | 3 | → documented MUSA-owned replacements (MUSA-0306) |
