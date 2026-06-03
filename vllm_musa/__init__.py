@@ -47,21 +47,21 @@ _patches_applied = False
 def _maybe_install_inmemory_hook_early() -> None:
     """MUSA-0303: install the in-memory patch hook as early as possible.
 
-    When the hook is selected (``VLLM_MUSA_INMEMORY_PATCH=1`` and not the legacy
-    escape hatch), register the ``sys.meta_path`` finder at ``import vllm_musa``
-    time so it precedes the engine's import of core ``vllm`` modules
-    (attention / MoE / FP8 / communicator) that otherwise land before
-    ``register_custom_ops``. The hook is lazy (only the module-name set is built
-    here; each ``.patch.py`` loads when its target imports) and idempotent, so
-    this is cheap and safe this early. The default (legacy disk patcher) path is
-    untouched — this is a no-op unless the env opts in.
+    **Default since MUSA-0303 was verified** (dense / MoE / spec-decode / TP=8
+    multiproc / MLA, 0 already-imported failures, 0 disk writes): register the
+    ``sys.meta_path`` finder at ``import vllm_musa`` time so it precedes the
+    engine's import of core ``vllm`` modules (attention / MoE / FP8 /
+    communicator) that otherwise land before ``register_custom_ops``. The hook is
+    lazy (only the module-name set is built here; each ``.patch.py`` loads when
+    its target imports) and idempotent, so this is cheap and safe this early.
+
+    Escape hatch: ``VLLM_MUSA_LEGACY_DISK_PATCH=1`` skips the hook and uses the
+    legacy disk patcher instead (see :func:`_apply_vllm_patches`).
     """
     import os
 
-    if os.environ.get("VLLM_MUSA_INMEMORY_PATCH", "0") != "1":
-        return
     if os.environ.get("VLLM_MUSA_LEGACY_DISK_PATCH", "0") == "1":
-        return
+        return  # explicit escape hatch -> legacy disk patcher
     try:
         from .patches.import_hook import install_import_hook
 
@@ -70,7 +70,7 @@ def _maybe_install_inmemory_hook_early() -> None:
         logger.warning("MUSA-0303: early in-memory hook install failed: %s", e)
 
 
-# Install the hook at import time (no-op unless VLLM_MUSA_INMEMORY_PATCH=1).
+# Install the hook at import time (the default; VLLM_MUSA_LEGACY_DISK_PATCH=1 opts out).
 _maybe_install_inmemory_hook_early()
 
 
@@ -131,15 +131,14 @@ def _apply_vllm_patches() -> None:
 
     This function is idempotent - it only applies patches once per process.
 
-    MUSA-0303 mechanism selector (the default does NOT move until the in-memory
-    hook passes the full regression matrix — it is the keystone patch path):
+    MUSA-0303 mechanism selector (default flipped after the in-memory hook passed
+    the full regression matrix — dense / MoE / spec-decode / TP=8 multiproc / MLA):
 
-    - default: the legacy disk patcher (:func:`vllm_musa.patches.apply_patches`,
-      rewrites installed ``vllm`` source on disk).
-    - ``VLLM_MUSA_INMEMORY_PATCH=1``: opt **in** to the in-memory
-      ``sys.meta_path`` source-transform hook (no disk writes). For verification.
-    - (post-verification) the default flips and ``VLLM_MUSA_LEGACY_DISK_PATCH=1``
-      becomes the escape hatch back to the disk patcher.
+    - **default: the in-memory ``sys.meta_path`` source-transform hook** (no disk
+      writes; normally already installed at ``import vllm_musa`` — this call is an
+      idempotent safety re-confirm).
+    - ``VLLM_MUSA_LEGACY_DISK_PATCH=1``: escape hatch — use the legacy disk patcher
+      (:func:`vllm_musa.patches.apply_patches`, rewrites installed ``vllm`` source).
     """
     global _patches_applied
     if _patches_applied:
@@ -147,23 +146,24 @@ def _apply_vllm_patches() -> None:
 
     import os
 
-    # MUSA-0303: legacy disk patcher is the default; opt into the in-memory hook
-    # explicitly during bring-up. (The inverse escape-hatch flag activates once
-    # the default flips.)
-    use_inmemory = os.environ.get("VLLM_MUSA_INMEMORY_PATCH", "0") == "1" and (
-        os.environ.get("VLLM_MUSA_LEGACY_DISK_PATCH", "0") != "1"
-    )
+    # MUSA-0303: in-memory hook is the default; the legacy disk patcher is the
+    # explicit escape hatch.
+    use_legacy = os.environ.get("VLLM_MUSA_LEGACY_DISK_PATCH", "0") == "1"
 
     try:
-        if use_inmemory:
+        if not use_legacy:
             from .patches.import_hook import install_import_hook
 
-            install_import_hook()
-            logger.info("MUSA-0303: using in-memory patch hook (VLLM_MUSA_INMEMORY_PATCH=1)")
+            install_import_hook()  # idempotent — normally installed at import time
+            logger.info(
+                "MUSA-0303: in-memory patch hook active (set "
+                "VLLM_MUSA_LEGACY_DISK_PATCH=1 for the legacy disk patcher)"
+            )
         else:
             from .patches import apply_patches
 
             apply_patches()
+            logger.info("MUSA-0303: legacy disk patcher active (VLLM_MUSA_LEGACY_DISK_PATCH=1)")
     except Exception as e:
         logger.error(f"Failed to apply vLLM patches: {e}")
 
