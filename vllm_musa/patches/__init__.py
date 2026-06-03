@@ -10,6 +10,7 @@ to ensure compatibility with the MUSA Triton version.
 import importlib.util
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
@@ -18,6 +19,70 @@ from vllm.logger import init_logger
 logger = init_logger(__name__)
 
 _patches_applied = False
+
+
+@dataclass(frozen=True)
+class PatchSpec:
+    """Declarative metadata for one vLLM-MUSA patch (MUSA-0301).
+
+    Fields are *derived* by default; a patch file may override any of them with
+    optional module-level constants (``PATCH_ID``, ``PATCH_PHASE``,
+    ``PATCH_REQUIRED``, ``PATCH_VERSION_RANGE``, ``PATCH_REMOVAL_CONDITION``,
+    ``PATCH_COMPAT_NOTE``). Existing patch files define none of these, so they
+    keep working unchanged — the override is opt-in.
+    """
+
+    id: str
+    module: str
+    file: str
+    kind: str  # "source-transform" | "side-effect"
+    phase: str = "plugin-load"
+    process_scope: str = "disk-persistent"  # source-transform; "process-local" for side-effect
+    required: bool = True
+    version_range: str | None = None
+    removal_condition: str | None = None
+    compat_note: str | None = None
+
+
+def _load_patch_spec(
+    module_name: str,
+    patch_file: Path,
+    patch_module: ModuleType | None = None,
+) -> PatchSpec:
+    """Build the :class:`PatchSpec` for a patch file (MUSA-0301).
+
+    ``kind``/``process_scope`` are derived from the loaded module; the rest
+    default sensibly and may be overridden by optional ``PATCH_*`` constants.
+    """
+    pid = patch_file.name
+    if pid.endswith(".patch.py"):
+        pid = pid[: -len(".patch.py")]
+    if patch_module is None:
+        patch_module = _load_patch_module(patch_file)
+    patches = getattr(patch_module, "PATCHES", []) if patch_module else []
+    has_norm = (
+        callable(getattr(patch_module, "normalize_source", None))
+        if patch_module
+        else False
+    )
+    kind = "source-transform" if (patches or has_norm) else "side-effect"
+    scope = "process-local" if kind == "side-effect" else "disk-persistent"
+
+    def _override(name: str, default):
+        return getattr(patch_module, name, default) if patch_module else default
+
+    return PatchSpec(
+        id=_override("PATCH_ID", pid),
+        module=module_name,
+        file=patch_file.name,
+        kind=kind,
+        phase=_override("PATCH_PHASE", "plugin-load"),
+        process_scope=scope,
+        required=bool(_override("PATCH_REQUIRED", True)),
+        version_range=_override("PATCH_VERSION_RANGE", None),
+        removal_condition=_override("PATCH_REMOVAL_CONDITION", None),
+        compat_note=_override("PATCH_COMPAT_NOTE", None),
+    )
 
 
 def _get_patch_files():
@@ -165,46 +230,67 @@ def patch_report() -> list[dict]:
         entry: dict = {
             "module": module_name,
             "file": patch_file.name,
+            "id": patch_file.name,
             "kind": "unknown",
             "target_resolved": False,
             "status": "unknown",
+            "phase": "plugin-load",
+            "process_scope": "disk-persistent",
+            "required": True,
+            "version_range": None,
+            "removal_condition": None,
         }
         try:
             origin = _resolve_module_origin(module_name)
             entry["target_resolved"] = origin is not None
             patch_module = _load_patch_module(patch_file)
+            spec = _load_patch_spec(module_name, patch_file, patch_module)
+            entry.update(
+                id=spec.id,
+                kind=spec.kind,
+                phase=spec.phase,
+                process_scope=spec.process_scope,
+                required=spec.required,
+                version_range=spec.version_range,
+                removal_condition=spec.removal_condition,
+            )
             if patch_module is None:
                 entry.update(kind="load-failed", status="load-failed")
+            elif spec.kind == "side-effect":
+                entry["status"] = "side-effect"
+            elif origin is None:
+                entry["status"] = "missing-target"
             else:
-                patches = getattr(patch_module, "PATCHES", [])
-                has_norm = callable(getattr(patch_module, "normalize_source", None))
-                if not patches and not has_norm:
-                    entry.update(kind="side-effect", status="side-effect")
-                elif origin is None:
-                    entry.update(kind="source-transform", status="missing-target")
-                else:
-                    entry["kind"] = "source-transform"
-                    try:
-                        with open(origin, "r") as f:
-                            source = f.read()
-                    except OSError:
-                        source = None
-                        entry["status"] = "unreadable-target"
-                    if source is not None:
-                        pending = sum(
-                            1 for old, new in patches if old in source and new not in source
-                        )
-                        applied = sum(1 for _, new in patches if new in source)
-                        entry["pending"] = pending
-                        entry["status"] = (
-                            "needs-apply"
-                            if pending
-                            else "applied"
-                            if applied
-                            else "no-op"
-                        )
+                try:
+                    with open(origin, "r") as f:
+                        source = f.read()
+                except OSError:
+                    source = None
+                    entry["status"] = "unreadable-target"
+                if source is not None:
+                    patches = getattr(patch_module, "PATCHES", [])
+                    pending = sum(
+                        1 for old, new in patches if old in source and new not in source
+                    )
+                    applied = sum(1 for _, new in patches if new in source)
+                    entry["pending"] = pending
+                    entry["status"] = (
+                        "needs-apply"
+                        if pending
+                        else "applied"
+                        if applied
+                        else "no-op"
+                    )
         except Exception as e:  # a report must never raise
             entry.update(status="error", error=str(e))
+        # MUSA-0301: a *required* patch that did not apply is a real failure;
+        # an optional/version-specific patch that skips is not.
+        entry["is_failure"] = bool(entry.get("required", True)) and entry["status"] in {
+            "missing-target",
+            "unreadable-target",
+            "load-failed",
+            "error",
+        }
         report.append(entry)
     return report
 

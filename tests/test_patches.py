@@ -1949,3 +1949,34 @@ class TestPatchManifest:
         report2 = vllm_musa.patch_report()
         assert [e["file"] for e in report] == [e["file"] for e in report2]
         assert [e["file"] for e in report] == sorted(e["file"] for e in report)
+
+    def test_patch_report_has_spec_fields(self):
+        # MUSA-0301: every entry carries the derived PatchSpec metadata.
+        import vllm_musa
+
+        for e in vllm_musa.patch_report():
+            assert e.get("id"), e
+            assert e["phase"], e
+            assert e["process_scope"] in {"disk-persistent", "process-local"}, e
+            assert isinstance(e["required"], bool), e
+            assert isinstance(e["is_failure"], bool), e
+            assert "version_range" in e
+
+    def test_patch_spec_optional_overrides_and_failure_flag(self):
+        # MUSA-0301: a patch may opt into PATCH_* overrides; the confirmed-dead
+        # deep_gemm_moe(old) patch is marked optional + version-gated, so it is
+        # NOT an is_failure even though its target is absent on v0.22. A
+        # *required* patch whose target is absent IS an is_failure — that is the
+        # required-vs-optional distinction.
+        import vllm_musa
+
+        by_mod = {e["module"]: e for e in vllm_musa.patch_report()}
+        dead = by_mod["vllm.model_executor.layers.fused_moe.deep_gemm_moe"]
+        assert dead["required"] is False
+        assert dead["version_range"] == "<v0.22"
+        assert dead["is_failure"] is False  # optional skip, not a failure
+
+        # is_failure is exactly required AND a not-applied status.
+        failed = {"missing-target", "unreadable-target", "load-failed", "error"}
+        for e in by_mod.values():
+            assert e["is_failure"] == (e["required"] and e["status"] in failed), e
