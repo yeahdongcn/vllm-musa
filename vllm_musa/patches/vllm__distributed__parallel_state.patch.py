@@ -132,7 +132,21 @@ def _is_musa() -> bool:
         return False
 
 
-if _ENABLED:
+def apply() -> None:
+    """MUSA-0302: explicit object-patch entry (was an import-time side effect).
+
+    MUSA-0124: wire the per-rank TP=1 draft group onto
+    ``SpecDecodeBaseProposer.load_model`` + ``EagleProposer.propose``, gated by
+    ``VLLM_MUSA_DRAFT_TP1`` (default off; idempotent via the
+    ``_musa_draft_tp1_patched`` class marker). Called by
+    ``vllm_musa.patches.apply_object_patches()`` at plugin load.
+    """
+    if not _ENABLED:
+        _log.debug(
+            "MUSA-0124: draft-TP=1 patch dormant (set VLLM_MUSA_DRAFT_TP1=1 to enable)"
+        )
+        return
+
     # CRITICAL ORDER (same hazard as the MUSA-0090 eagle patch): importing
     # `vllm.v1.spec_decode.eagle` / `llm_base_proposer` triggers their
     # `from vllm.v1.spec_decode.utils import eagle_prepare_next_token_padded_kernel`.
@@ -196,7 +210,3 @@ if _ENABLED:
             "MUSA-0124: draft-TP=1 patch installed "
             "(load_model + propose wrapped; VLLM_MUSA_DRAFT_TP1=1)"
         )
-else:
-    _log.debug(
-        "MUSA-0124: draft-TP=1 patch dormant (set VLLM_MUSA_DRAFT_TP1=1 " "to enable)"
-    )

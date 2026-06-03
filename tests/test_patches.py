@@ -1980,3 +1980,96 @@ class TestPatchManifest:
         failed = {"missing-target", "unreadable-target", "load-failed", "error"}
         for e in by_mod.values():
             assert e["is_failure"] == (e["required"] and e["status"] in failed), e
+
+
+class TestObjectPatchPhase:
+    """MUSA-0302: side-effect patches are applied by an explicit, ordered,
+    idempotent object-patch phase via a module-level ``apply()`` — not as an
+    import-time side effect of the patch loader."""
+
+    # The two genuine in-process object/monkey patches in this tree.
+    _OBJECT_PATCH_MODULES = {
+        "vllm.v1.spec_decode.eagle",  # MUSA-0090/0302 kernel prime
+        "vllm.distributed.parallel_state",  # MUSA-0124/0302 draft-TP=1 wiring
+    }
+
+    def test_object_patch_files_expose_callable_apply(self):
+        # Each side-effect patch must define a top-level ``apply()`` so the
+        # object-patch phase can call it explicitly (no import-time side effect).
+        from vllm_musa.patches import _get_patch_files, _load_patch_module
+
+        found = {}
+        for module_name, patch_file in _get_patch_files():
+            mod = _load_patch_module(patch_file)
+            if mod is not None and callable(getattr(mod, "apply", None)):
+                found[module_name] = patch_file.name
+        assert self._OBJECT_PATCH_MODULES <= set(found), (
+            f"object-patch modules missing apply(): "
+            f"{self._OBJECT_PATCH_MODULES - set(found)}"
+        )
+
+    def test_object_patch_files_keep_empty_patches_list(self):
+        # An object patch must NOT also be a source transform: empty PATCHES and
+        # no normalize_source, so apply_patches() leaves the file untouched.
+        from vllm_musa.patches import _get_patch_files, _load_patch_module
+
+        for module_name, patch_file in _get_patch_files():
+            if module_name not in self._OBJECT_PATCH_MODULES:
+                continue
+            mod = _load_patch_module(patch_file)
+            assert getattr(mod, "PATCHES", None) == [], module_name
+            assert not callable(getattr(mod, "normalize_source", None)), module_name
+
+    def test_loading_object_patch_module_has_no_import_side_effect(self):
+        # Regression for MUSA-0302: importing the eagle shim must NOT prime the
+        # kernel by itself — only calling apply() may. We assert the module body
+        # defines apply but does not import the prime at top level by checking
+        # the source has no module-level ``import vllm_musa.v1.spec_decode.utils``
+        # outside the apply() function.
+        from vllm_musa.patches import _get_patch_files
+
+        eagle = next(
+            f for m, f in _get_patch_files() if m == "vllm.v1.spec_decode.eagle"
+        )
+        src = eagle.read_text()
+        assert "def apply(" in src, "eagle shim lost its apply()"
+        # The prime import must be indented (inside apply), never at column 0.
+        for line in src.splitlines():
+            if line.startswith("import vllm_musa.v1.spec_decode.utils"):
+                raise AssertionError(
+                    "eagle prime is a module-level import-side-effect again; "
+                    "it must live inside apply()"
+                )
+
+    def test_apply_object_patches_is_idempotent(self):
+        # force=True always runs; calling twice must not raise (each apply() is
+        # individually idempotent), and every result row has the expected shape.
+        from vllm_musa.patches import apply_object_patches
+
+        r1 = apply_object_patches(force=True)
+        r2 = apply_object_patches(force=True)
+        assert isinstance(r1, list) and isinstance(r2, list)
+        applied_mods = {e["module"] for e in r1}
+        assert self._OBJECT_PATCH_MODULES <= applied_mods, applied_mods
+        for e in r1 + r2:
+            assert {"module", "file", "status"} <= set(e), e
+            assert e["status"] in {"applied", "error"}, e
+            assert e["status"] == "applied", e  # none should error in this env
+
+    def test_apply_object_patches_guard_skips_repeat(self):
+        # Without force, the module-level guard returns [] after the first run.
+        import vllm_musa.patches as P
+
+        P.apply_object_patches(force=True)  # ensure the guard is set
+        assert P._object_patches_applied is True
+        assert P.apply_object_patches() == []
+
+    def test_report_flags_object_patches(self):
+        # The read-only report marks side-effect patches that expose apply().
+        import vllm_musa
+
+        by_mod = {e["module"]: e for e in vllm_musa.patch_report()}
+        for module_name in self._OBJECT_PATCH_MODULES:
+            e = by_mod[module_name]
+            assert e["kind"] == "side-effect", e
+            assert e.get("object_patch") is True, e

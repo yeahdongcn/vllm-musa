@@ -19,6 +19,7 @@ from vllm.logger import init_logger
 logger = init_logger(__name__)
 
 _patches_applied = False
+_object_patches_applied = False
 
 
 @dataclass(frozen=True)
@@ -257,6 +258,10 @@ def patch_report() -> list[dict]:
             if patch_module is None:
                 entry.update(kind="load-failed", status="load-failed")
             elif spec.kind == "side-effect":
+                # MUSA-0302: side-effect patches are now applied by the explicit
+                # apply_object_patches() phase via a module-level apply(), not as
+                # an import-time side effect. Flag which ones expose that entry.
+                entry["object_patch"] = callable(getattr(patch_module, "apply", None))
                 entry["status"] = "side-effect"
             elif origin is None:
                 entry["status"] = "missing-target"
@@ -421,3 +426,59 @@ def apply_patches(force: bool = False):
                 logger.warning(f"Failed to apply patches to {module_name}: {e}")
 
     _patches_applied = True
+
+
+def apply_object_patches(force: bool = False) -> list[dict]:
+    """Apply explicit in-process object/monkey patches (MUSA-0302).
+
+    Source-transform patches mutate vLLM's *files* (handled by
+    :func:`apply_patches`). A few MUSA patches instead install in-process
+    object monkey-patches or prime a Triton kernel. These historically ran as
+    an **import-time side effect** the instant :func:`apply_patches` loaded the
+    module — implicit, order-fragile, and invisible to any report. MUSA-0302
+    makes them explicit: such a patch file keeps ``PATCHES = []`` and defines a
+    module-level idempotent ``def apply() -> None``; this phase loads each
+    patch module in deterministic :func:`_get_patch_files` order and calls
+    ``apply()`` where present.
+
+    Ordering / correctness notes:
+
+    - Files sort by name, so ``vllm.distributed.parallel_state`` (MUSA-0124
+      draft-TP=1) is visited before ``vllm.v1.spec_decode.eagle`` (kernel
+      prime). This matches the previous import-time order exactly. Both orders
+      are safe: parallel_state's ``apply()`` is dormant unless
+      ``VLLM_MUSA_DRAFT_TP1=1`` and, when active, primes the kernel itself
+      before importing the proposer classes; eagle's ``apply()`` is an
+      idempotent prime import. The proposer modules are not bound by vLLM until
+      model load, which is after this phase.
+    - Each ``apply()`` is individually idempotent (import is a no-op after the
+      first; the draft-TP=1 wiring guards on a class marker), so this phase is
+      safe to call more than once. ``force`` re-runs it anyway.
+
+    Returns a per-patch list of ``{module, file, status, [error]}`` dicts for
+    logging/diagnostics. Never raises — a failing object-patch is logged and
+    recorded, matching :func:`apply_patches`' best-effort contract.
+    """
+    global _object_patches_applied
+    if _object_patches_applied and not force:
+        return []
+
+    results: list[dict] = []
+    for module_name, patch_file in _get_patch_files():
+        patch_module = _load_patch_module(patch_file)
+        if patch_module is None:
+            continue
+        apply_fn = getattr(patch_module, "apply", None)
+        if not callable(apply_fn):
+            continue
+        entry: dict = {"module": module_name, "file": patch_file.name, "status": "applied"}
+        try:
+            apply_fn()
+            logger.info(f"Applied object-patch {module_name}")
+        except Exception as e:
+            entry.update(status="error", error=str(e))
+            logger.warning(f"Failed to apply object-patch {module_name}: {e}")
+        results.append(entry)
+
+    _object_patches_applied = True
+    return results

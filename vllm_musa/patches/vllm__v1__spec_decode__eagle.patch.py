@@ -21,5 +21,17 @@ Without this prime the proposer's Triton compile fails with
 
 PATCHES: list = []
 
-# CRITICAL ORDER: prime the MUSA-Triton-adapted kernel before upstream binds it.
-import vllm_musa.v1.spec_decode.utils  # noqa: F401
+
+def apply() -> None:
+    """MUSA-0302: explicit object-patch entry (was an import-time side effect).
+
+    Primes the MUSA-Triton-adapted ``eagle_prepare_next_token_padded_kernel``
+    from ``vllm_musa.v1.spec_decode.utils`` before upstream
+    ``vllm.v1.spec_decode.llm_base_proposer`` binds its own copy (otherwise the
+    proposer's Triton compile fails with "mismatched type for valid_count").
+
+    Called explicitly by ``vllm_musa.patches.apply_object_patches()`` at plugin
+    load — importing this file no longer triggers the prime. Idempotent (the
+    import is a no-op after the first).
+    """
+    import vllm_musa.v1.spec_decode.utils  # noqa: F401

@@ -115,6 +115,24 @@ def _apply_vllm_patches() -> None:
     _patches_applied = True
 
 
+def _apply_object_patches() -> None:
+    """Apply explicit in-process object/monkey patches for MUSA (MUSA-0302).
+
+    Runs immediately after :func:`_apply_vllm_patches`, preserving the exact
+    point at which the spec-decode kernel prime and the draft-TP=1 wiring used
+    to fire as an *import-time side effect* of ``apply_patches()``. They are now
+    explicit, ordered, and idempotent ``apply()`` functions called by
+    ``vllm_musa.patches.apply_object_patches``. Best-effort: a failure is logged,
+    not raised.
+    """
+    try:
+        from .patches import apply_object_patches
+
+        apply_object_patches()
+    except Exception as e:
+        logger.error(f"Failed to apply object patches: {e}")
+
+
 def patch_report() -> list[dict]:
     """Status of all vLLM-MUSA source patches (MUSA-0301), read-only.
 
@@ -283,6 +301,11 @@ def _patch_musa_batch_defaults() -> None:
 def _register_patches() -> None:
     """Apply vLLM source patches for MUSA compatibility."""
     _apply_vllm_patches()
+    # MUSA-0302: explicit in-process object/monkey patches (spec-decode kernel
+    # prime, draft-TP=1 wiring) — formerly import-time side effects of the loop
+    # above. Must run here, after the source patches and before _register_ops /
+    # model load binds the proposer kernels.
+    _apply_object_patches()
     _patch_functorch_config_patch()
     _patch_inductor_config_patch()
     _patch_vllm_backend_call_options()
