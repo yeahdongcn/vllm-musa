@@ -2,10 +2,27 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Pytest configuration and fixtures for MUSA platform tests."""
 
+import os
 import sys
 from unittest.mock import MagicMock
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_os_environ():
+    """Restore os.environ after every test.
+
+    MUSA platform-default tests call apply_config_platform_defaults(), which
+    sets real env vars (not via monkeypatch). Without this, those vars leak
+    across tests and cause order-dependent failures (MUSA-3172).
+    """
+    saved = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
 
 
 @pytest.fixture

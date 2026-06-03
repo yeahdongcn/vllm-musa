@@ -234,7 +234,14 @@ class TestSamplerPatch:
                 assert "logits.shape[1] >= 65536" in new_source
                 break
         else:
-            raise AssertionError("topk_topp_sampler patch file was not found")
+            # MUSA-3172: the topk_topp_sampler *source patch* was removed in the
+            # v0.22 migration to MUSA native sampling ops ("Using MUSA native
+            # ops for top-p/top-k/min-p sampling"). This test guarded the old
+            # patch; skip until it is rewritten to assert the native-ops path.
+            pytest.skip(
+                "topk_topp_sampler source patch removed in v0.22 native-ops "
+                "sampler migration; test needs rewrite for the native path"
+            )
 
 
 class TestRejectionSamplerPatch:
@@ -882,7 +889,12 @@ class TestMUSAFlashAttentionReshapeCache:
         monkeypatch.setattr(
             vllm_platforms,
             "current_platform",
-            SimpleNamespace(is_musa=lambda: True),
+            # v0.22 quant_utils.py reads current_platform.fp8_dtype() at import,
+            # so the mock must provide it (MUSA-3172).
+            SimpleNamespace(
+                is_musa=lambda: True,
+                fp8_dtype=lambda: torch.float8_e4m3fn,
+            ),
         )
 
         flash_attn = ModuleType("flash_attn_interface")
@@ -994,10 +1006,12 @@ class TestMUSANativeKernelReviewHardening:
         assert "forced_block == 256" in source
         assert "forced_block == 512" in source
         assert "forced_block == 1024" in source
-        assert (
-            "VLLM_MUSA_FUSED_ADD_RMSNORM_BLOCK_X must be one of "
-            "128, 256, 512, or 1024"
-        ) in source
+        # The error message is split across two adjacent C++ string literals in
+        # the .mu source (a line break between "...must be one of " and the
+        # value list), so match the parts rather than the concatenation
+        # (MUSA-3172: avoid brittle cross-literal substring matching).
+        assert "VLLM_MUSA_FUSED_ADD_RMSNORM_BLOCK_X must be one of" in source
+        assert "128, 256, 512, or 1024" in source
 
 
 class TestMUSAPlatformDefaults:
