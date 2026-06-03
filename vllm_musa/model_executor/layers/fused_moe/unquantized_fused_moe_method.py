@@ -75,25 +75,22 @@ class MusaUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
         shared_experts_input: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         # MUSA-3171: upstream v0.22 applies shared experts at the modular-kernel
-        # layer; the legacy `fused_experts()` helper does NOT accept
-        # `shared_experts`/`shared_experts_input`. Passing them (even as None)
-        # raises `TypeError: unexpected keyword argument 'shared_experts'` and
-        # breaks every MoE model on MUSA v0.22. For shared-expert MoE (e.g.
-        # DeepSeek-V2/V3) delegate to the upstream modular path, which applies
-        # and combines the shared experts correctly. Non-shared MoE (Qwen3-MoE,
-        # MiniMax) keeps the original legacy fast path unchanged.
+        # layer; the legacy `fused_experts()` helper has no
+        # `shared_experts`/`shared_experts_input` params, and this MUSA OOT method
+        # never initializes `self.moe_kernel` (it always uses the legacy path), so
+        # the upstream modular path is unavailable here. Run the routed experts
+        # via the legacy fast path, then -- for shared-expert MoE (DeepSeek-V2/V3)
+        # -- apply the shared experts and add their output to the routed output,
+        # matching upstream's modular finalize (routed + shared). Inplace is
+        # disabled when shared experts are present so the original input survives
+        # for them (upstream does the same).
         if shared_experts is not None:
-            return self.forward_cuda(
-                layer,
-                x,
-                topk_weights,
-                topk_ids,
-                shared_experts,
-                shared_experts_input,
+            se_input = (
+                shared_experts_input if shared_experts_input is not None else x
             )
 
-        is_inplace = not is_torch_equal_or_newer("2.9")
-        return fused_experts(
+        is_inplace = (not is_torch_equal_or_newer("2.9")) and shared_experts is None
+        routed = fused_experts(
             hidden_states=x,
             w1=layer.w13_weight,
             w2=layer.w2_weight,
@@ -106,3 +103,12 @@ class MusaUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
             global_num_experts=layer.global_num_experts,
             expert_map=layer.expert_map,
         )
+
+        if shared_experts is None:
+            return routed
+
+        # `shared_experts` is the SharedExperts wrapper; `_layer` is the shared
+        # expert module. Call it directly (synchronous; no aux-stream overlap on
+        # MUSA) and combine.
+        shared_out = shared_experts._layer(se_input)
+        return routed + shared_out
