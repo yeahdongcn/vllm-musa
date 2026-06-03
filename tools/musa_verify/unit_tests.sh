@@ -31,7 +31,14 @@ export MUSA_VISIBLE_DEVICES="${UNIT_TEST_DEVICE:-7}"
 LOGDIR="${LOGDIR:-/tmp/vllm_omni_musa_logs}"; mkdir -p "$LOGDIR"
 LOG="$LOGDIR/unit_test_patches.log"
 
-python -m pytest tests/test_patches.py -q "$@" >"$LOG" 2>&1
+# MUSA-3172: test_patches.py is not in-process isolated (the disk-rewrite patch
+# mechanism + os.environ/sys.modules state leak across tests), so failures are
+# order-dependent in a single process. Run each test in its own fork (--forked,
+# from pytest-forked) for deterministic results. Until the MUSA-0303/0304
+# mechanism+test refactor removes the shared-state dependency, --forked is the
+# supported way to run this suite.
+python -m pip show pytest-forked >/dev/null 2>&1 || python -m pip install -q pytest-forked
+python -m pytest tests/test_patches.py -q --forked "$@" >"$LOG" 2>&1
 rc=$?
 tail -n 25 "$LOG"
 
