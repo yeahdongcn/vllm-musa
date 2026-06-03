@@ -1015,7 +1015,16 @@ class TestMUSANativeKernelReviewHardening:
 
 
 class TestMUSAPlatformDefaults:
-    """Tests for MUSA platform-level vLLM config defaults."""
+    """Tests for MUSA platform-level vLLM config defaults.
+
+    NOTE (MUSA-3172): several tests here fail *in-suite* but pass standalone.
+    Root cause is pervasive cross-test env-leak: apply_config_platform_defaults()
+    writes real os.environ vars (not via monkeypatch), and multiple other test
+    classes silently depend on that leaked state. A naive per-test environ
+    restore (global or class-scoped) just relocates the failures. Fixing this
+    needs a proper per-test isolation pass across the whole file -- tracked as
+    MUSA-0304 test-hardening, not patched here.
+    """
 
     def _make_vllm_config(
         self,
