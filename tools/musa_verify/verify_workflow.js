@@ -69,7 +69,7 @@ phase('Verify')
 const thunks = []
 thunks.push(() =>
   runAgent('unit', 'verify:unit',
-    rexec(`UNIT_TEST_DEVICE=${unitDevice} bash tools/musa_verify/unit_tests.sh`)))
+    rexec(`WS=${ws} UNIT_TEST_DEVICE=${unitDevice} bash tools/musa_verify/unit_tests.sh`)))
 
 for (const m of models) {
   thunks.push(() =>

@@ -20,7 +20,7 @@ if [ -n "${MUSA_VENV:-}" ] && [ -f "${MUSA_VENV}/bin/activate" ]; then
   source "${MUSA_VENV}/bin/activate"
 fi
 
-WS="${WS:-/ws}"
+WS="${WS:-$PWD}"   # default to caller's cwd (orchestrator cds into the repo under test)
 cd "$WS" || { echo "FAIL unit_test_patches reason=no_ws($WS)"; exit 1; }
 
 export TORCHDYNAMO_DISABLE=1
