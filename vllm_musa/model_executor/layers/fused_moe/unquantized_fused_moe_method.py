@@ -74,8 +74,26 @@ class MusaUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
         shared_experts: object | None = None,
         shared_experts_input: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        # MUSA-3171: upstream v0.22 applies shared experts at the modular-kernel
+        # layer; the legacy `fused_experts()` helper does NOT accept
+        # `shared_experts`/`shared_experts_input`. Passing them (even as None)
+        # raises `TypeError: unexpected keyword argument 'shared_experts'` and
+        # breaks every MoE model on MUSA v0.22. For shared-expert MoE (e.g.
+        # DeepSeek-V2/V3) delegate to the upstream modular path, which applies
+        # and combines the shared experts correctly. Non-shared MoE (Qwen3-MoE,
+        # MiniMax) keeps the original legacy fast path unchanged.
+        if shared_experts is not None:
+            return self.forward_cuda(
+                layer,
+                x,
+                topk_weights,
+                topk_ids,
+                shared_experts,
+                shared_experts_input,
+            )
+
         is_inplace = not is_torch_equal_or_newer("2.9")
-        result = fused_experts(
+        return fused_experts(
             hidden_states=x,
             w1=layer.w13_weight,
             w2=layer.w2_weight,
@@ -87,8 +105,4 @@ class MusaUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
             apply_router_weight_on_input=layer.apply_router_weight_on_input,
             global_num_experts=layer.global_num_experts,
             expert_map=layer.expert_map,
-            shared_experts=shared_experts,
-            shared_experts_input=shared_experts_input,
         )
-
-        return result
