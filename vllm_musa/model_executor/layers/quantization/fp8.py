@@ -120,8 +120,18 @@ def apply(
     shared_experts_input: torch.Tensor | None = None,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     if layer.ep_size != None and layer.ep_size <= 1:
-        is_inplace = not is_torch_equal_or_newer("2.9")
-        return fused_experts(
+        # MUSA-3173: the legacy fused_experts() path does not run shared experts.
+        # For shared-expert FP8 MoE (DeepSeek-V2/V3) apply them here and combine
+        # (routed + shared), matching the modular path and MUSA-3171. Disable
+        # inplace when shared experts are present so the original input survives.
+        if shared_experts is not None:
+            se_input = (
+                shared_experts_input if shared_experts_input is not None else x
+            )
+        is_inplace = (
+            not is_torch_equal_or_newer("2.9")
+        ) and shared_experts is None
+        routed = fused_experts(
             hidden_states=x,
             w1=layer.w13_weight,
             w2=layer.w2_weight,
@@ -134,6 +144,9 @@ def apply(
             expert_map=layer.expert_map,
             quant_config=self.moe_quant_config,
         )
+        if shared_experts is None:
+            return routed
+        return routed + shared_experts._layer(se_input)
     else:
         assert not self.is_monolithic
         assert self.moe_kernel is not None
