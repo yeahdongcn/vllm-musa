@@ -2080,19 +2080,28 @@ class TestInMemoryImportHook:
     these tests exercise the mechanism directly without installing globally
     (except the install/uninstall idempotency test, which cleans up)."""
 
-    def test_patch_map_excludes_side_effect_patches(self):
+    def test_target_name_map_and_lazy_resolution(self):
         from vllm_musa.patches import import_hook
 
-        patch_map, report = import_hook._build_patch_map()
-        # Source-transform patches (non-empty PATCHES or a normalize_source) are
-        # in the map; the two object/side-effect patches are NOT.
-        assert "vllm.v1.spec_decode.eagle" not in patch_map
-        assert "vllm.distributed.parallel_state" not in patch_map
-        # At least one real source-transform target is present.
-        assert any(k.startswith("vllm.") for k in patch_map), patch_map.keys()
-        for mod, entry in patch_map.items():
-            patches, normalizer = entry
-            assert patches or callable(normalizer), mod
+        name_map = import_hook._target_name_map()
+        # The cheap name map covers every .patch.py (incl. side-effect ones) and
+        # is built WITHOUT executing any .patch.py.
+        assert "vllm.v1.spec_decode.eagle" in name_map
+        assert "vllm.distributed.parallel_state" in name_map
+        finder = import_hook.MusaInMemoryPatchFinder(name_map)
+        # Side-effect/object patches lazily resolve to None (left to normal import).
+        assert finder._resolve_entry("vllm.v1.spec_decode.eagle") is None
+        assert finder._resolve_entry("vllm.distributed.parallel_state") is None
+        # At least one real source-transform target resolves to (patches, normalizer).
+        found = False
+        for m in name_map:
+            entry = finder._resolve_entry(m)
+            if entry is not None:
+                patches, normalizer = entry
+                assert patches or callable(normalizer), m
+                found = True
+                break
+        assert found, "no source-transform target resolved to (patches, normalizer)"
 
     def test_loader_patches_in_memory_without_file_mutation(self, tmp_path):
         from vllm_musa.patches import import_hook
@@ -2150,7 +2159,8 @@ class TestInMemoryImportHook:
                 import_hook.uninstall_import_hook()
             r1 = import_hook.install_import_hook()
             assert import_hook.is_installed() is True
-            assert isinstance(r1, list) and r1
+            # Report is a list (possibly empty: empty == 0 already-imported failures).
+            assert isinstance(r1, list)
             # Second install is a no-op.
             r2 = import_hook.install_import_hook()
             assert r2 == [{"module": "*", "state": "already-installed"}]

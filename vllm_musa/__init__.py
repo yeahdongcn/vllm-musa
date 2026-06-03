@@ -44,6 +44,36 @@ except ImportError:
 _patches_applied = False
 
 
+def _maybe_install_inmemory_hook_early() -> None:
+    """MUSA-0303: install the in-memory patch hook as early as possible.
+
+    When the hook is selected (``VLLM_MUSA_INMEMORY_PATCH=1`` and not the legacy
+    escape hatch), register the ``sys.meta_path`` finder at ``import vllm_musa``
+    time so it precedes the engine's import of core ``vllm`` modules
+    (attention / MoE / FP8 / communicator) that otherwise land before
+    ``register_custom_ops``. The hook is lazy (only the module-name set is built
+    here; each ``.patch.py`` loads when its target imports) and idempotent, so
+    this is cheap and safe this early. The default (legacy disk patcher) path is
+    untouched — this is a no-op unless the env opts in.
+    """
+    import os
+
+    if os.environ.get("VLLM_MUSA_INMEMORY_PATCH", "0") != "1":
+        return
+    if os.environ.get("VLLM_MUSA_LEGACY_DISK_PATCH", "0") == "1":
+        return
+    try:
+        from .patches.import_hook import install_import_hook
+
+        install_import_hook()
+    except Exception as e:  # pragma: no cover - defensive; later install retries
+        logger.warning("MUSA-0303: early in-memory hook install failed: %s", e)
+
+
+# Install the hook at import time (no-op unless VLLM_MUSA_INMEMORY_PATCH=1).
+_maybe_install_inmemory_hook_early()
+
+
 ########### platform plugin ###########
 
 
