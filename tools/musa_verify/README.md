@@ -5,6 +5,31 @@ change). It runs the **unit tests** plus **one functional server smoke per model
 all **concurrently**, with each smoke pinned to its own MUSA device via
 `MUSA_VISIBLE_DEVICES` (e.g. DeepSeek-V2-Lite on device 0, Qwen3-8B on device 1).
 
+## Test environment (pinned)
+
+All MUSA-0300..0309 verification runs in **one** environment, for reproducibility:
+
+- Host `mccxadmin@10.18.32.18`, container **`yeahdongcn70`**.
+- Python venv **`/root/.virtualenvs/sglang-0.5.6`** (a `uv` virtualenv; carries
+  `mate 0.2.0+mu437torch2.9`, `torchada 0.1.56`, `torch_musa 2.9.0`, `triton 3.2.0`,
+  `sglang 0.5.6.post2`). Activate with
+  `source /root/.virtualenvs/sglang-0.5.6/bin/activate` (a login shell also prepends it
+  to `PATH` via `.bashrc`). Export `MUSA_VENV=/root/.virtualenvs/sglang-0.5.6` so the
+  scripts/orchestrators activate it automatically.
+- **Do not switch envs between tickets** — mixing envs invalidates cross-ticket comparison.
+  The base/system env (vllm 0.20.1, mate 0.1.3) is the M3/dflash line; do not test here.
+
+Two checkout layouts are supported:
+
+- **Normal flow** — `CONTAINER_WS=/ws` is a git checkout you can `git reset --hard` to the
+  SHA under test (use when `/ws` is free).
+- **Isolated flow** — when `/ws` holds other WIP, ship the branch with
+  `git archive <branch> | ssh '… tar -x -C /ws-verify'` and build there
+  (`CONTAINER_WS=/ws-verify`). Building re-points the venv's editable `vllm-musa`; restore
+  the prior line with `cd /ws && pip install -e . --no-build-isolation --no-deps`.
+- Build with `--no-deps` (the venv already satisfies the pins; avoids the broken
+  `mate 0.2.0` mirror metadata).
+
 ## Files
 
 | File | Runs where | Purpose |

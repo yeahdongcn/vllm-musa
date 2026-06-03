@@ -14,6 +14,12 @@
 #   FAIL unit_test_patches rc=<rc>
 set -uo pipefail
 
+# Activate the pinned test venv (sglang-0.5.6) if the caller exported MUSA_VENV.
+if [ -n "${MUSA_VENV:-}" ] && [ -f "${MUSA_VENV}/bin/activate" ]; then
+  # shellcheck disable=SC1091
+  source "${MUSA_VENV}/bin/activate"
+fi
+
 WS="${WS:-/ws}"
 cd "$WS" || { echo "FAIL unit_test_patches reason=no_ws($WS)"; exit 1; }
 

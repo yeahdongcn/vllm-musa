@@ -30,7 +30,8 @@ export const meta = {
 const a = args || {}
 const host = a.host || 'mccxadmin@10.18.32.18'
 const container = a.container || 'yeahdongcn70'
-const ws = a.ws || '/ws'
+const ws = a.ws || '/ws'             // use '/ws-verify' for the isolated-build flow
+const venv = a.venv || '/root/.virtualenvs/sglang-0.5.6'   // pinned test env (see README)
 const pass = a.pass || ''            // required; passed at invoke time, never committed
 const unitDevice = a.unitDevice ?? 7
 const models = a.models || [
@@ -51,7 +52,7 @@ const RESULT = {
 // sshpass wrapper: run one in-container command, non-interactively.
 const rexec = (inner) =>
   `sshpass -p '${pass}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 ${host} ` +
-  `"docker exec -i ${container} bash -lc 'cd ${ws} && ${inner}'"`
+  `"docker exec -i ${container} bash -lc 'source ${venv}/bin/activate 2>/dev/null || true; cd ${ws} && ${inner}'"`
 
 const runAgent = (name, label, cmd) =>
   agent(

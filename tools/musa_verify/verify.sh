@@ -23,13 +23,14 @@ HOST="${MUSA_HOST:-mccxadmin@10.18.32.18}"
 CONTAINER="${MUSA_CONTAINER:-yeahdongcn70}"
 FORK="${FORK_REMOTE:-yeahdongcn}"
 WS="${CONTAINER_WS:-/ws}"
+MUSA_VENV="${MUSA_VENV:-/root/.virtualenvs/sglang-0.5.6}"   # pinned test env (see README)
 UNIT_TEST_DEVICE="${UNIT_TEST_DEVICE:-7}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 SHA="$(git rev-parse HEAD)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-rexec(){ sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 "$HOST" "docker exec -i $CONTAINER bash -s"; }
+rexec(){ sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 "$HOST" "docker exec -i $CONTAINER bash -c 'source $MUSA_VENV/bin/activate 2>/dev/null || true; exec bash -s'"; }
 
 echo "==== verify branch=$BRANCH sha=${SHA:0:9} container=$CONTAINER ===="
 

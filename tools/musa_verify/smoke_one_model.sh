@@ -22,6 +22,12 @@
 #   SKIP <family> device=<d> reason=<...>
 set -uo pipefail
 
+# Activate the pinned test venv (sglang-0.5.6) if the caller exported MUSA_VENV.
+if [ -n "${MUSA_VENV:-}" ] && [ -f "${MUSA_VENV}/bin/activate" ]; then
+  # shellcheck disable=SC1091
+  source "${MUSA_VENV}/bin/activate"
+fi
+
 FAMILY="${1:?family}"; MODEL="${2:?model_path}"; DEV="${3:?device}"; PORT="${4:?port}"
 TP="${5:-1}"; EXPECT="${6:-beijing}"
 
