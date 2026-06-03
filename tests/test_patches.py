@@ -2073,3 +2073,87 @@ class TestObjectPatchPhase:
             e = by_mod[module_name]
             assert e["kind"] == "side-effect", e
             assert e.get("object_patch") is True, e
+
+
+class TestInMemoryImportHook:
+    """MUSA-0303: in-memory sys.meta_path source-transform hook. Default-OFF;
+    these tests exercise the mechanism directly without installing globally
+    (except the install/uninstall idempotency test, which cleans up)."""
+
+    def test_patch_map_excludes_side_effect_patches(self):
+        from vllm_musa.patches import import_hook
+
+        patch_map, report = import_hook._build_patch_map()
+        # Source-transform patches (non-empty PATCHES or a normalize_source) are
+        # in the map; the two object/side-effect patches are NOT.
+        assert "vllm.v1.spec_decode.eagle" not in patch_map
+        assert "vllm.distributed.parallel_state" not in patch_map
+        # At least one real source-transform target is present.
+        assert any(k.startswith("vllm.") for k in patch_map), patch_map.keys()
+        for mod, entry in patch_map.items():
+            patches, normalizer = entry
+            assert patches or callable(normalizer), mod
+
+    def test_loader_patches_in_memory_without_file_mutation(self, tmp_path):
+        from vllm_musa.patches import import_hook
+
+        f = tmp_path / "fake_target.py"
+        original = "X = 1\nVALUE = 'old'\n"
+        f.write_text(original)
+        loader = import_hook._PatchingSourceLoader(
+            "fake_target", str(f), [("VALUE = 'old'", "VALUE = 'new'")], None
+        )
+        out = loader.get_source("fake_target")
+        assert "VALUE = 'new'" in out
+        assert loader.musa_transformed is True
+        # The on-disk file is UNTOUCHED — the whole point of MUSA-0303.
+        assert f.read_text() == original
+
+    def test_loader_idempotent_when_already_patched(self, tmp_path):
+        from vllm_musa.patches import import_hook
+
+        f = tmp_path / "already.py"
+        # 'new' already present -> the `new not in source` gate skips re-apply.
+        f.write_text("VALUE = 'new'\n")
+        loader = import_hook._PatchingSourceLoader(
+            "already", str(f), [("VALUE = 'old'", "VALUE = 'new'")], None
+        )
+        out = loader.get_source("already")
+        assert out.count("VALUE = 'new'") == 1
+        assert loader.musa_transformed is False  # no change made
+
+    def test_loader_runs_normalizer(self, tmp_path):
+        from vllm_musa.patches import import_hook
+
+        f = tmp_path / "norm.py"
+        f.write_text("a = 1\n")
+        loader = import_hook._PatchingSourceLoader(
+            "norm", str(f), [], lambda s: s + "\n# normalized\n"
+        )
+        out = loader.get_source("norm")
+        assert out.endswith("# normalized\n")
+        assert loader.musa_transformed is True
+
+    def test_finder_ignores_non_target_modules(self):
+        from vllm_musa.patches import import_hook
+
+        finder = import_hook.MusaInMemoryPatchFinder({"vllm.some.target": ([], None)})
+        assert finder.find_spec("os", None, None) is None
+        assert finder.find_spec("vllm.not.in.map", None, None) is None
+
+    def test_install_uninstall_idempotent(self):
+        from vllm_musa.patches import import_hook
+
+        was_installed = import_hook.is_installed()
+        try:
+            if was_installed:
+                import_hook.uninstall_import_hook()
+            r1 = import_hook.install_import_hook()
+            assert import_hook.is_installed() is True
+            assert isinstance(r1, list) and r1
+            # Second install is a no-op.
+            r2 = import_hook.install_import_hook()
+            assert r2 == [{"module": "*", "state": "already-installed"}]
+        finally:
+            import_hook.uninstall_import_hook()
+            assert import_hook.is_installed() is False

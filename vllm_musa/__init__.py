@@ -100,15 +100,40 @@ def _apply_vllm_patches() -> None:
     """Apply vLLM source patches for MUSA compatibility.
 
     This function is idempotent - it only applies patches once per process.
+
+    MUSA-0303 mechanism selector (the default does NOT move until the in-memory
+    hook passes the full regression matrix — it is the keystone patch path):
+
+    - default: the legacy disk patcher (:func:`vllm_musa.patches.apply_patches`,
+      rewrites installed ``vllm`` source on disk).
+    - ``VLLM_MUSA_INMEMORY_PATCH=1``: opt **in** to the in-memory
+      ``sys.meta_path`` source-transform hook (no disk writes). For verification.
+    - (post-verification) the default flips and ``VLLM_MUSA_LEGACY_DISK_PATCH=1``
+      becomes the escape hatch back to the disk patcher.
     """
     global _patches_applied
     if _patches_applied:
         return
 
-    try:
-        from .patches import apply_patches
+    import os
 
-        apply_patches()
+    # MUSA-0303: legacy disk patcher is the default; opt into the in-memory hook
+    # explicitly during bring-up. (The inverse escape-hatch flag activates once
+    # the default flips.)
+    use_inmemory = os.environ.get("VLLM_MUSA_INMEMORY_PATCH", "0") == "1" and (
+        os.environ.get("VLLM_MUSA_LEGACY_DISK_PATCH", "0") != "1"
+    )
+
+    try:
+        if use_inmemory:
+            from .patches.import_hook import install_import_hook
+
+            install_import_hook()
+            logger.info("MUSA-0303: using in-memory patch hook (VLLM_MUSA_INMEMORY_PATCH=1)")
+        else:
+            from .patches import apply_patches
+
+            apply_patches()
     except Exception as e:
         logger.error(f"Failed to apply vLLM patches: {e}")
 
