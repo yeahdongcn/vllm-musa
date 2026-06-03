@@ -57,6 +57,11 @@ This box also hosts the private M3 epic. The harness is built to be safe alongsi
 Never hardcode the SSH password. `verify.sh` reads `$REMOTE_PASS`; the Workflow takes it
 via `args.pass` at invoke time. The value lives in `curated/musa-remote-config.md`.
 
+> **Runner recommendation:** prefer **`verify.sh`** (bash, reads `$REMOTE_PASS` directly).
+> The Workflow-tool path (`verify_workflow.js`) routes the password through subagents, which
+> proved unreliable in practice (agents fell back to an unset `$REMOTE_PASS` → `sshpass -p ''`
+> → auth failure). Use the Workflow only when you can confirm the credential reaches the agents.
+
 ```bash
 export REMOTE_PASS=...        # from curated/musa-remote-config.md (or the dev shell)
 ```

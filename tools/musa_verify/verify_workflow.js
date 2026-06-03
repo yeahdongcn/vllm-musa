@@ -58,6 +58,8 @@ const runAgent = (name, label, cmd) =>
   agent(
     `Run EXACTLY this command with the Bash tool (do not modify it, do not add flags):\n\n` +
     `${cmd}\n\n` +
+    `This starts a model server and can take several minutes — call Bash with timeout: 600000 (10 min) ` +
+    `and run it in the foreground (do NOT background it). ` +
     `The script prints exactly one line beginning with PASS, FAIL, or SKIP as its final stdout line. ` +
     `Return that line verbatim as "line", set "status" to its first word, and "name" to "${name}". ` +
     `If the command errors or prints no such line, set status=FAIL and line to the last ~200 chars of output.`,

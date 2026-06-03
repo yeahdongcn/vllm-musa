@@ -34,6 +34,7 @@ TP="${5:-1}"; EXPECT="${6:-beijing}"
 MIN_FREE_MIB="${MIN_FREE_MIB:-40000}"      # require >=40 GiB free on the target device
 READY_TIMEOUT="${READY_TIMEOUT:-900}"      # seconds to wait for /health
 REQ_TIMEOUT="${REQ_TIMEOUT:-120}"          # seconds for the chat request
+REQ_MAX_TOKENS="${REQ_MAX_TOKENS:-256}"    # enough for reasoning models (Qwen3 <think>) to reach the answer
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 LOGDIR="${LOGDIR:-/tmp/vllm_omni_musa_logs}"; mkdir -p "$LOGDIR"
@@ -91,7 +92,7 @@ done
 # --- 4) semantic request (server startup alone is NOT a pass) ---
 resp="$(curl -sS -m "$REQ_TIMEOUT" "http://127.0.0.1:${PORT}/v1/chat/completions" \
   -H 'Content-Type: application/json' \
-  -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"What is the capital of China? Answer in one word.\"}],\"max_tokens\":16,\"temperature\":0}" 2>&1)"
+  -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"What is the capital of China? Answer in one word.\"}],\"max_tokens\":${REQ_MAX_TOKENS},\"temperature\":0}" 2>&1)"
 echo "$resp" > "$OUTDIR/smoke_${FAMILY}_dev${DEV}.resp.json"
 echo "$resp" | grep -iq "$EXPECT" || fail "expected '$EXPECT' missing in response: $(echo "$resp" | head -c 300)"
 
