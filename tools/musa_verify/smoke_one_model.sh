@@ -29,7 +29,7 @@ if [ -n "${MUSA_VENV:-}" ] && [ -f "${MUSA_VENV}/bin/activate" ]; then
 fi
 
 FAMILY="${1:?family}"; MODEL="${2:?model_path}"; DEV="${3:?device}"; PORT="${4:?port}"
-TP="${5:-1}"; EXPECT="${6:-beijing}"
+TP="${5:-1}"; EXPECT="${6:-beijing}"; MODE="${7:-chat}"   # chat | completion (base models)
 
 MIN_FREE_MIB="${MIN_FREE_MIB:-40000}"      # require >=40 GiB free on the target device
 READY_TIMEOUT="${READY_TIMEOUT:-900}"      # seconds to wait for /health
@@ -90,9 +90,16 @@ until curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; do
 done
 
 # --- 4) semantic request (server startup alone is NOT a pass) ---
-resp="$(curl -sS -m "$REQ_TIMEOUT" "http://127.0.0.1:${PORT}/v1/chat/completions" \
-  -H 'Content-Type: application/json' \
-  -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"What is the capital of China? Answer in one word.\"}],\"max_tokens\":${REQ_MAX_TOKENS},\"temperature\":0}" 2>&1)"
+if [ "$MODE" = "completion" ]; then
+  # base (non-instruct) models: /v1/completions with a completion-style prompt
+  resp="$(curl -sS -m "$REQ_TIMEOUT" "http://127.0.0.1:${PORT}/v1/completions" \
+    -H 'Content-Type: application/json' \
+    -d "{\"model\":\"${MODEL}\",\"prompt\":\"The capital of China is\",\"max_tokens\":${REQ_MAX_TOKENS},\"temperature\":0}" 2>&1)"
+else
+  resp="$(curl -sS -m "$REQ_TIMEOUT" "http://127.0.0.1:${PORT}/v1/chat/completions" \
+    -H 'Content-Type: application/json' \
+    -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"What is the capital of China? Answer in one word.\"}],\"max_tokens\":${REQ_MAX_TOKENS},\"temperature\":0}" 2>&1)"
+fi
 echo "$resp" > "$OUTDIR/smoke_${FAMILY}_dev${DEV}.resp.json"
 echo "$resp" | grep -iq "$EXPECT" || fail "expected '$EXPECT' missing in response: $(echo "$resp" | head -c 300)"
 
