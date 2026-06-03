@@ -115,6 +115,18 @@ def _apply_vllm_patches() -> None:
     _patches_applied = True
 
 
+def patch_report() -> list[dict]:
+    """Status of all vLLM-MUSA source patches (MUSA-0301), read-only.
+
+    Public entry point; delegates to ``vllm_musa.patches.patch_report``. Useful
+    for ``vllm_collect_env`` and for debugging which patches applied/skipped on a
+    given vLLM version. Returns a list of per-patch dicts; see that function.
+    """
+    from .patches import patch_report as _patch_report
+
+    return _patch_report()
+
+
 def _patch_vllm_backend_call_options() -> None:
     """Accept torch.compile backend keyword options on this vLLM snapshot."""
     try:

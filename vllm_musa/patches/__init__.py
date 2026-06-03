@@ -21,11 +21,18 @@ _patches_applied = False
 
 
 def _get_patch_files():
-    """Get all patch files in the patches directory."""
+    """Get all patch files in the patches directory, in deterministic order.
+
+    MUSA-0301: sort by filename so discovery/application order is reproducible
+    across machines and runs (``glob`` order is filesystem-dependent). Patches
+    target independent modules so order does not affect correctness, but a
+    stable order makes the patch report and any import-side-effect ordering
+    deterministic.
+    """
     patches_dir = Path(__file__).parent
     patch_files = []
 
-    for patch_file in patches_dir.glob("*.patch.py"):
+    for patch_file in sorted(patches_dir.glob("*.patch.py")):
         # Extract module name from filename
         # Format: module.name.patch.py -> module.name
         module_name = patch_file.stem.rsplit(".patch", 1)[0]
@@ -136,6 +143,70 @@ def _resolve_module_origin(module_name: str) -> str | None:
         logger.debug(f"Module {module_name} not found, skipping patch")
         return None
     return spec.origin
+
+
+def patch_report() -> list[dict]:
+    """Report the status of every vLLM-MUSA source patch (read-only, MUSA-0301).
+
+    Inspects the *installed* vLLM source for each ``*.patch.py`` and classifies
+    it without modifying anything (safe to call any time, including before
+    ``apply_patches``):
+
+    - ``kind``: ``source-transform`` (non-empty ``PATCHES``) or ``side-effect``
+      (empty ``PATCHES`` — an import-side-effect / object monkey-patch).
+    - ``target_resolved``: whether the target module resolves in this env.
+    - ``status``: ``applied`` / ``needs-apply`` / ``no-op`` / ``missing-target`` /
+      ``unreadable-target`` / ``side-effect`` / ``load-failed`` / ``error``.
+
+    Returned in deterministic ``_get_patch_files()`` order.
+    """
+    report: list[dict] = []
+    for module_name, patch_file in _get_patch_files():
+        entry: dict = {
+            "module": module_name,
+            "file": patch_file.name,
+            "kind": "unknown",
+            "target_resolved": False,
+            "status": "unknown",
+        }
+        try:
+            origin = _resolve_module_origin(module_name)
+            entry["target_resolved"] = origin is not None
+            patch_module = _load_patch_module(patch_file)
+            if patch_module is None:
+                entry.update(kind="load-failed", status="load-failed")
+            else:
+                patches = getattr(patch_module, "PATCHES", [])
+                has_norm = callable(getattr(patch_module, "normalize_source", None))
+                if not patches and not has_norm:
+                    entry.update(kind="side-effect", status="side-effect")
+                elif origin is None:
+                    entry.update(kind="source-transform", status="missing-target")
+                else:
+                    entry["kind"] = "source-transform"
+                    try:
+                        with open(origin, "r") as f:
+                            source = f.read()
+                    except OSError:
+                        source = None
+                        entry["status"] = "unreadable-target"
+                    if source is not None:
+                        pending = sum(
+                            1 for old, new in patches if old in source and new not in source
+                        )
+                        applied = sum(1 for _, new in patches if new in source)
+                        entry["pending"] = pending
+                        entry["status"] = (
+                            "needs-apply"
+                            if pending
+                            else "applied"
+                            if applied
+                            else "no-op"
+                        )
+        except Exception as e:  # a report must never raise
+            entry.update(status="error", error=str(e))
+        report.append(entry)
+    return report
 
 
 def apply_patches(force: bool = False):

@@ -1913,3 +1913,39 @@ class TestPatchesReadme:
         # Should document the double underscore convention
         assert "__" in content or "double underscore" in content.lower()
         assert ".patch.py" in content
+
+
+class TestPatchManifest:
+    """MUSA-0301: deterministic patch discovery + read-only patch_report()."""
+
+    def test_get_patch_files_sorted_and_unique(self):
+        from vllm_musa.patches import _get_patch_files
+
+        names = [f.name for _, f in _get_patch_files()]
+        assert names, "no patch files discovered"
+        assert names == sorted(names), "patch discovery order is not deterministic"
+        assert len(names) == len(set(names)), "duplicate patch files"
+
+    def test_patch_report_structure_and_determinism(self):
+        import vllm_musa
+        from vllm_musa.patches import _get_patch_files
+
+        report = vllm_musa.patch_report()
+        assert isinstance(report, list)
+        assert len(report) == len(_get_patch_files()), "report must cover every patch"
+
+        allowed_status = {
+            "applied", "needs-apply", "no-op", "missing-target",
+            "unreadable-target", "side-effect", "load-failed", "error", "unknown",
+        }
+        allowed_kind = {"source-transform", "side-effect", "load-failed", "unknown"}
+        for e in report:
+            assert {"module", "file", "kind", "target_resolved", "status"} <= set(e), e
+            assert e["status"] in allowed_status, e
+            assert e["kind"] in allowed_kind, e
+            assert isinstance(e["target_resolved"], bool)
+
+        # Deterministic across calls and sorted by file (MUSA-0301 ordering).
+        report2 = vllm_musa.patch_report()
+        assert [e["file"] for e in report] == [e["file"] for e in report2]
+        assert [e["file"] for e in report] == sorted(e["file"] for e in report)
