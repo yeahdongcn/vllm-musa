@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: musa <musa@local>
+Date: Sun, 22 Jun 2026 00:00:00 +0000
+Subject: [PATCH] MUSA: deepen async-scheduling host/GPU pipeline (VLLM_ASYNC_PIPELINE_DEPTH)
+
+Lets the V1 EngineCore hold one more scheduled decode batch in flight so
+per-step host work (schedule + update_from_output) overlaps two forwards
+instead of one on host-bound decode. Opt-in via VLLM_ASYNC_PIPELINE_DEPTH;
+default 2 keeps upstream behaviour. Upstream-engine change, not MUSA-specific.
+---
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+index c9503e46d..fb58452d9 100644
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -189,6 +189,26 @@ class EngineCore:
+         # schedule and execute batches, and is required by pipeline parallelism
+         # to eliminate pipeline bubbles.
+         self.batch_queue_size = self.model_executor.max_concurrent_batches
++        # Deepen the async-scheduling host/GPU pipeline. With async scheduling
++        # on a TP-only deployment the executor reports max_concurrent_batches
++        # == 2, which keeps exactly one forward in flight while the host runs
++        # schedule() + update_from_output() for the adjacent step. On a
++        # host-bound decode (large MoE / multimodal at high concurrency) that
++        # per-step host work does not fully fit behind a single forward, so the
++        # GPU goes idle between launches. Holding one more scheduled batch lets
++        # the host stay a further step ahead so forwards issue back to back.
++        # Opt-in and bounded by VLLM_ASYNC_PIPELINE_DEPTH (default 2 == upstream
++        # behaviour); only deepens when async scheduling is active and the
++        # executor is at the 2-deep async floor.
++        if self.batch_queue_size == 2 and (
++            vllm_config.scheduler_config.async_scheduling
++        ):
++            try:
++                pipeline_depth = int(os.environ.get("VLLM_ASYNC_PIPELINE_DEPTH", "2"))
++            except ValueError:
++                pipeline_depth = 2
++            if pipeline_depth > self.batch_queue_size:
++                self.batch_queue_size = pipeline_depth
+         self.batch_queue: (
+             deque[tuple[Future[ModelRunnerOutput], SchedulerOutput, Future[Any]]] | None
+         ) = None
