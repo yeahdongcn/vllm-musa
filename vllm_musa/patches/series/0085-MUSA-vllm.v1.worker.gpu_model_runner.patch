@@ -1,0 +1,52 @@
+From 592f5859f642466c17bfb0b9e9988f1ed1ee6cca Mon Sep 17 00:00:00 2001
+From: Xiaodong Ye <Squirrelbes@salesperson.net>
+Date: Wed, 8 Jul 2026 16:21:37 +0800
+Subject: [PATCH] MUSA: vllm.v1.worker.gpu_model_runner
+
+Lay mamba conv and ssm cache states out in contiguous, segregated regions
+(all conv slots, then all ssm slots) instead of interleaving conv+ssm per
+page. The temporal (ssm) state is then is_contiguous(), restoring coalesced
+access on the gated-delta-net decode path and letting state-pool kernels that
+require a contiguous tensor read it in place. The block manager copies each
+state independently by slot index, so the layout is transparent to it; the
+per-page byte budget is unchanged.
+---
+ vllm/v1/worker/gpu_model_runner.py | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runner.py
+index 74938a823..df9944cb2 100644
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -7164,12 +7164,15 @@ class GPUModelRunner(
+                     storage_offset_bytes = 0
+                     for shape, dtype in zip(kv_cache_spec.shapes, kv_cache_spec.dtypes):
+                         dtype_size = get_dtype_size(dtype)
+-                        num_element_per_page = (
+-                            kv_cache_spec.page_size_bytes // dtype_size
+-                        )
+                         target_shape = (num_blocks, *shape)
+                         stride = torch.empty(target_shape).stride()
+-                        target_stride = (num_element_per_page, *stride[1:])
++                        # MUSA: lay each mamba state out contiguously in its
++                        # own segregated region (all conv slots, then all ssm
++                        # slots) instead of interleaving conv+ssm per page, so
++                        # the ssm state is is_contiguous() and decode reads it
++                        # coalesced. Block manager copies per-state by slot, so
++                        # the layout is transparent; per-page bytes unchanged.
++                        target_stride = stride
+                         assert storage_offset_bytes % dtype_size == 0
+                         tensor = torch.as_strided(
+                             raw_tensor.view(dtype),
+@@ -7178,7 +7181,7 @@ class GPUModelRunner(
+                             storage_offset=storage_offset_bytes // dtype_size,
+                         )
+                         state_tensors.append(tensor)
+-                        storage_offset_bytes += stride[0] * dtype_size
++                        storage_offset_bytes += stride[0] * num_blocks * dtype_size
+ 
+                     kv_caches[layer_name] = state_tensors
+                 else:
+-- 
+2.34.1
+
