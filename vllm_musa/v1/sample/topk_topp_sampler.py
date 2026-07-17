@@ -14,6 +14,7 @@ from vllm.config.model import LogprobsMode
 from vllm.platforms import current_platform
 
 from vllm_musa import _custom_ops as _ops
+from vllm_musa.v1.sample.penalties import install_penalty_hook
 from vllm_musa.utils.environ import envs
 
 logger = logging.getLogger(__name__)
@@ -635,6 +636,8 @@ def _worker_sample(
 
 
 def install_hooks() -> None:
+    install_penalty_hook()
+
     topk_cls = vllm_topk_topp_sampler.TopKTopPSampler
     if not getattr(topk_cls, "_musa_sampling_hooks_installed", False):
         topk_cls._musa_original_init = topk_cls.__init__
