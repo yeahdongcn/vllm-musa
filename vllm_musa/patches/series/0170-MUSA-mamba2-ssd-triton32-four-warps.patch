@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: musa <musa@local>
+Date: Wed, 23 Sep 2026 18:00:00 +0800
+Subject: [PATCH] MUSA: mamba2 ssd triton32 four warps
+
+---
+ .../layers/mamba/ops/ssd_chunk_scan.py        | 40 ++-----------------
+ 1 file changed, 3 insertions(+), 37 deletions(-)
+
+diff --git a/vllm/model_executor/layers/mamba/ops/ssd_chunk_scan.py b/vllm/model_executor/layers/mamba/ops/ssd_chunk_scan.py
+index e656441..a456e01 100644
+--- a/vllm/model_executor/layers/mamba/ops/ssd_chunk_scan.py
++++ b/vllm/model_executor/layers/mamba/ops/ssd_chunk_scan.py
+@@ -17,26 +17,6 @@ TRITON_22 = version.parse(triton.__version__) >= version.parse("2.2.0")
+ from vllm.triton_utils.musa import is_musa_triton_32
+ 
+ 
+-def _musa_ssd_early_config_prune(configs, named_args, **kwargs):
+-    """Select the wider tile only for the verified Nemotron SSD shape."""
+-    if not is_musa_triton_32():
+-        return configs
+-    args = {**named_args, **kwargs}
+-    is_nemotron_shape = (
+-        args.get("chunk_size") == 128
+-        and args.get("hdim") == 64
+-        and args.get("dstate") == 128
+-        and args.get("nheads_ngroups_ratio") == 8
+-    )
+-    tile = 32 if is_nemotron_shape else 16
+-    return [
+-        config
+-        for config in configs
+-        if config.kwargs["BLOCK_SIZE_M"] == tile
+-        and config.kwargs["BLOCK_SIZE_N"] == tile
+-    ]
+-
+-
+ def _ssd_autotune_configs():
+     # MUSA Triton 3.2.x cannot compile the
+     # broad upstream autotune search. Use a conservative tile only for that
+@@ -47,13 +27,8 @@ def _ssd_autotune_configs():
+             triton.Config(
+                 {"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 16, "BLOCK_SIZE_K": 32},
+                 num_stages=1,
+-                num_warps=2,
+-            ),
+-            triton.Config(
+-                {"BLOCK_SIZE_M": 32, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32},
+-                num_stages=1,
+-                num_warps=2,
+-            ),
++                num_warps=4,
++            )
+         ]
+     return [
+ 
+@@ -186,18 +161,9 @@ def _ssd_autotune_configs():
+     ]
+ 
+ 
+-def _ssd_autotune_kwargs():
+-    if is_musa_triton_32():
+-        return {
+-            "key": ["chunk_size", "hdim", "dstate", "nheads_ngroups_ratio", "IS_CAUSAL"],
+-            "prune_configs_by": {"early_config_prune": _musa_ssd_early_config_prune},
+-        }
+-    return {"key": ["chunk_size", "hdim", "dstate", "IS_CAUSAL"]}
+-
+-
+ @triton.autotune(
+     configs=_ssd_autotune_configs(),
+-    **_ssd_autotune_kwargs(),
++    key=["chunk_size", "hdim", "dstate", "IS_CAUSAL"],
+ )
+ @triton.jit
+ def _chunk_scan_fwd_kernel(
