@@ -7,7 +7,6 @@ import numpy as np
 import torch
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
-from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
 from vllm_musa.v1.worker.qwen_identity_logits_view import (
     _is_musa_tensor,
@@ -96,13 +95,28 @@ def select_qwen_next_input_ids_buffer(runner: Any) -> torch.Tensor | None:
     return runner.input_buffers.input_ids
 
 
-def install_hooks() -> None:
+def install_hooks() -> bool:
+    """Attach the Qwen fused-decode hooks to vLLM's ``GPUModelRunner``.
+
+    Returns ``False`` when ``vllm.v1.worker.gpu.model_runner`` is still
+    initializing. Importing ``vllm.v1.worker.gpu_worker`` before ``vllm_musa``
+    is registered reaches this module through vLLM's
+    ``eplb_utils -> deepseek_v4 -> sparse_swa -> vllm_musa.v1.attention.ops``
+    chain, i.e. while the module that defines ``GPUModelRunner`` is still
+    executing its own imports. Callers retry later; see
+    ``MUSAPlatformBase.check_and_update_config``.
+    """
+    try:
+        from vllm.v1.worker.gpu.model_runner import GPUModelRunner
+    except ImportError:
+        return False
     GPUModelRunner._musa_select_uniform_decode_model_inputs = (  # type: ignore[attr-defined]
         select_qwen_fused_decode_inputs
     )
     GPUModelRunner._musa_select_next_input_ids_buffer = (  # type: ignore[attr-defined]
         select_qwen_next_input_ids_buffer
     )
+    return True
 
 
 install_hooks()

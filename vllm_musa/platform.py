@@ -470,6 +470,21 @@ class MUSAPlatformBase(Platform):
 
     @classmethod
     def check_and_update_config(cls, vllm_config: "VllmConfig") -> None:
+        # The Qwen input-id and logits-view hooks patch GPUModelRunner when their
+        # modules are imported, but that import can run while
+        # ``vllm.v1.worker.gpu.model_runner`` is still initializing — importing
+        # ``vllm.v1.worker.gpu_worker`` before vllm_musa is registered reaches
+        # them through vLLM's ``eplb_utils -> deepseek_v4 -> sparse_swa`` chain.
+        # Retry here: this runs once per engine start, before any worker exists,
+        # and install_hooks() is idempotent.
+        from vllm_musa.v1.worker import (
+            qwen_fused_next_input_ids,
+            qwen_identity_logits_view,
+        )
+
+        qwen_fused_next_input_ids.install_hooks()
+        qwen_identity_logits_view.install_hooks()
+
         # pin the diffusion backend before anything reads the attention config
         force_triton_attn_for_diffusion(vllm_config)
 

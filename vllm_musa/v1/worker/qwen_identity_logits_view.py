@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
-from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
 from vllm_musa.optimization_contract import (
     OptimizationFeature,
@@ -62,10 +61,21 @@ def select_qwen_identity_logits_view(
     return hidden_states[:num_reqs]
 
 
-def install_hooks() -> None:
+def install_hooks() -> bool:
+    """Attach the Qwen identity logits-view hook to vLLM's ``GPUModelRunner``.
+
+    Returns ``False`` while ``vllm.v1.worker.gpu.model_runner`` is still
+    initializing; see ``install_hooks`` in ``qwen_fused_next_input_ids`` for
+    the import order that causes it. Callers retry later.
+    """
+    try:
+        from vllm.v1.worker.gpu.model_runner import GPUModelRunner
+    except ImportError:
+        return False
     GPUModelRunner._musa_select_sample_hidden_states = (  # type: ignore[attr-defined]
         select_qwen_identity_logits_view
     )
+    return True
 
 
 install_hooks()
