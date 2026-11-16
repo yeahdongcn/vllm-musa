@@ -1,0 +1,20 @@
+# Distributions dropped from vLLM-Omni's requirements before it is installed on
+# the pinned vLLM-MUSA base, one per line as `name  # why`.
+#
+# The MUSA foundation is a contract: torch, torch_musa, vllm, numpy and the rest
+# were built and validated together, and the build fails rather than move one.
+# A requirement that cannot coexist with that contract therefore has only three
+# honest outcomes -- bump the foundation, drop the requirement, or do not build
+# the image. This file records the second, with the reason it is safe.
+#
+# An entry is only defensible when the feature degrades cleanly without the
+# package. Check that the importing code actually tolerates its absence before
+# adding one, and say so here.
+
+# Requires numpy>=1.26.4; the MUSA line pins numpy==1.26.0 because that is what
+# the validated torch/torch_musa build was tested against. Only Cosmos3 uses it,
+# via vllm_omni/diffusion/models/cosmos3/guardrails.py, which imports it inside
+# a try/except ImportError and runs without guardrails when it is missing. To
+# serve Cosmos3 with guardrails, install cosmos-guardrail and a newer numpy
+# yourself and accept that the pin moves.
+cosmos-guardrail
